@@ -101,6 +101,13 @@ Whether you're a defense consultant, enterprise executive, legal professional, o
 - **Open Source:** Meetily is open source and free to use.
 - **Flexible AI Provider Support:** Choose from Ollama (local), Claude, Groq, OpenRouter, or use your own OpenAI-compatible endpoint.
 
+## Ivnhq Live Notes Workstream
+
+This fork is tracking a local-first **Live Notes Mode** roadmap: rolling meeting summaries, live action/decision extraction, manual highlights, "What did I miss?" recaps, and Markdown/Obsidian export.
+
+- [Ivnhq Live Notes Roadmap](docs/IVNHQ_LIVE_NOTES_ROADMAP.md)
+- [Ivnhq Live Notes Issue Backlog](docs/IVNHQ_LIVE_NOTES_ISSUES.md)
+
 ## Installation
 
 ### 🪟 **Windows**

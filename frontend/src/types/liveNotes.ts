@@ -269,3 +269,89 @@ export function createLiveNotesRecap(update: LiveNotesUpdate): LiveNotesRecap {
     highlights: update.highlights?.filter((item) => item.text?.trim()) ?? [],
   };
 }
+
+function formatExportTime(ms: number): string {
+  const totalSeconds = Math.max(Math.floor(ms / 1000), 0);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function formatExportRange(startMs?: number, endMs?: number): string {
+  if (typeof startMs !== 'number' && typeof endMs !== 'number') return '';
+
+  const label = typeof startMs === 'number' && typeof endMs === 'number'
+    ? `${formatExportTime(startMs)}-${formatExportTime(endMs)}`
+    : formatExportTime(startMs ?? endMs ?? 0);
+
+  return ` [${label}]`;
+}
+
+function addStringSection(lines: string[], title: string, items: string[]): void {
+  lines.push(`## ${title}`, '');
+
+  if (items.length === 0) {
+    lines.push('None noted.', '');
+    return;
+  }
+
+  items.forEach((item) => lines.push(`- ${item}`));
+  lines.push('');
+}
+
+export function formatLiveNotesAsMarkdown(state: LiveNotesState): string {
+  const lines: string[] = ['# Live Notes', ''];
+
+  if (state.updatedAt) {
+    lines.push(`Updated: ${new Date(state.updatedAt).toLocaleString()}`, '');
+  }
+
+  lines.push('## Current Topic', '');
+  lines.push(state.currentTopic?.trim() || 'None noted.', '');
+
+  addStringSection(lines, 'Rolling Summary', state.rollingSummary);
+  addStringSection(lines, 'Key Points', state.keyPoints);
+
+  lines.push('## Decisions', '');
+  if (state.decisions.length === 0) {
+    lines.push('None noted.', '');
+  } else {
+    state.decisions.forEach((decision) => {
+      lines.push(`- ${decision.text}${formatExportRange(decision.transcriptStartMs, decision.transcriptEndMs)}`);
+    });
+    lines.push('');
+  }
+
+  lines.push('## Action Items', '');
+  if (state.actionItems.length === 0) {
+    lines.push('None noted.', '');
+  } else {
+    state.actionItems.forEach((item) => {
+      const metadata = [
+        item.owner ? `owner: ${item.owner}` : null,
+        item.dueDate ? `due: ${item.dueDate}` : null,
+      ].filter(Boolean);
+      const suffix = metadata.length > 0 ? ` (${metadata.join(', ')})` : '';
+      lines.push(`- ${item.text}${suffix}${formatExportRange(item.transcriptStartMs, item.transcriptEndMs)}`);
+    });
+    lines.push('');
+  }
+
+  addStringSection(lines, 'Open Questions', state.openQuestions);
+  addStringSection(lines, 'Risks', state.risks);
+
+  lines.push('## Highlights', '');
+  if (state.highlights.length === 0) {
+    lines.push('None noted.', '');
+  } else {
+    state.highlights.forEach((highlight) => {
+      const marker = highlight.userMarked ? 'User-marked: ' : '';
+      const note = highlight.note ? ` - ${highlight.note}` : '';
+      lines.push(`- ${marker}${highlight.text || 'Marked highlight'}${note}${formatExportRange(highlight.transcriptStartMs, highlight.transcriptEndMs)}`);
+    });
+    lines.push('');
+  }
+
+  return lines.join('\n').trimEnd();
+}

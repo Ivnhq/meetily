@@ -3,6 +3,7 @@ import type { Transcript } from '@/types';
 import {
   createEmptyLiveNotesState,
   createLiveNotesRecap,
+  formatLiveNotesAsMarkdown,
   formatTranscriptChunk,
   mergeLiveNotesUpdate,
 } from './liveNotes';
@@ -116,6 +117,53 @@ describe('live notes helpers', () => {
       risks: [],
       highlights: [{ text: 'User asked what they missed' }],
     });
+
+    vi.useRealTimers();
+  });
+
+  it('exports live notes as markdown with evidence timestamps', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-23T13:00:00.000Z'));
+
+    const markdown = formatLiveNotesAsMarkdown({
+      ...createEmptyLiveNotesState('meeting-1'),
+      updatedAt: '2026-05-23T12:55:00.000Z',
+      currentTopic: 'Pilot workflow',
+      rollingSummary: ['The team picked the MVP path.'],
+      keyPoints: ['Tests come first'],
+      decisions: [
+        {
+          text: 'Use SQLite persistence',
+          transcriptStartMs: 29_000,
+          transcriptEndMs: 38_000,
+        },
+      ],
+      actionItems: [
+        {
+          text: 'Maya to test a five minute recording',
+          owner: 'Maya',
+          transcriptStartMs: 15_000,
+          transcriptEndMs: 28_000,
+        },
+      ],
+      openQuestions: ['Will Gemma return clean JSON?'],
+      risks: ['CPU-only models may be slow'],
+      highlights: [
+        {
+          id: 'manual-1',
+          text: 'Important MVP decision',
+          userMarked: true,
+          transcriptStartMs: 5_000,
+          transcriptEndMs: 14_000,
+          createdAt: '2026-05-23T12:50:00.000Z',
+        },
+      ],
+    });
+
+    expect(markdown).toContain('# Live Notes');
+    expect(markdown).toContain('- Use SQLite persistence [00:29-00:38]');
+    expect(markdown).toContain('- Maya to test a five minute recording (owner: Maya) [00:15-00:28]');
+    expect(markdown).toContain('- User-marked: Important MVP decision [00:05-00:14]');
 
     vi.useRealTimers();
   });

@@ -1,10 +1,11 @@
 'use client';
 
 import type React from 'react';
-import { AlertCircle, CheckCircle2, CircleHelp, Clock3, Highlighter, ListChecks, Loader2, RefreshCw, Sparkles } from 'lucide-react';
+import { AlertCircle, CheckCircle2, CircleHelp, Clipboard, Clock3, Highlighter, ListChecks, Loader2, RefreshCw, Sparkles } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { LiveNotesRecap, LiveNotesState } from '@/types/liveNotes';
+import { formatLiveNotesAsMarkdown, LiveNotesRecap, LiveNotesState } from '@/types/liveNotes';
 
 interface LiveNotesPanelProps {
   liveNotes: LiveNotesState;
@@ -94,6 +95,15 @@ export function LiveNotesPanel({
   onRecap,
   onMarkHighlight,
 }: LiveNotesPanelProps) {
+  const copyMarkdown = async () => {
+    try {
+      await navigator.clipboard.writeText(formatLiveNotesAsMarkdown(liveNotes));
+      toast.success('Live notes copied as Markdown');
+    } catch {
+      toast.error('Could not copy Live Notes Markdown');
+    }
+  };
+
   return (
     <aside className="w-full xl:w-[380px] flex-shrink-0 border-t xl:border-t-0 xl:border-l border-gray-200 bg-gray-50">
       <div className="sticky top-0 max-h-screen overflow-y-auto p-4 pb-28">
@@ -159,6 +169,20 @@ export function LiveNotesPanel({
               </Button>
             </TooltipTrigger>
             <TooltipContent>Mark the last 90 seconds as a highlight</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={copyMarkdown}
+              >
+                <Clipboard className="h-4 w-4" />
+                <span className="hidden 2xl:inline">Copy</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Copy Live Notes as Markdown</TooltipContent>
           </Tooltip>
         </div>
 

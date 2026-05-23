@@ -3,10 +3,12 @@ use crate::database::repositories::{
     transcript_chunk::TranscriptChunksRepository,
 };
 use crate::state::AppState;
+use crate::summary::llm_client::{generate_summary, LLMProvider};
+use crate::summary::processor::clean_llm_markdown_output;
 use crate::summary::service::SummaryService;
 use log::{error as log_error, info as log_info, warn as log_warn};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SummaryResponse {
@@ -24,6 +26,139 @@ pub struct SummaryResponse {
 pub struct ProcessTranscriptResponse {
     pub message: String,
     pub process_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveNotesActionItem {
+    pub text: String,
+    pub owner: Option<String>,
+    pub due_date: Option<String>,
+    pub transcript_start_ms: Option<f64>,
+    pub transcript_end_ms: Option<f64>,
+    pub confidence: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveNotesDecision {
+    pub text: String,
+    pub transcript_start_ms: Option<f64>,
+    pub transcript_end_ms: Option<f64>,
+    pub confidence: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveNotesHighlight {
+    pub text: Option<String>,
+    pub transcript_start_ms: Option<f64>,
+    pub transcript_end_ms: Option<f64>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveNotesUpdate {
+    pub current_topic: Option<String>,
+    pub rolling_summary: Option<Vec<String>>,
+    pub key_points: Option<Vec<String>>,
+    pub decisions: Option<Vec<LiveNotesDecision>>,
+    pub action_items: Option<Vec<LiveNotesActionItem>>,
+    pub open_questions: Option<Vec<String>>,
+    pub risks: Option<Vec<String>>,
+    pub highlights: Option<Vec<LiveNotesHighlight>>,
+}
+
+/// Generates a small structured update for in-meeting live notes.
+///
+/// This is intentionally separate from the final summary pipeline: it is fast,
+/// stateless on the Rust side, and designed for rolling frontend state merges.
+#[tauri::command]
+pub async fn api_generate_live_notes_update<R: Runtime>(
+    app: AppHandle<R>,
+    transcript_chunk: String,
+    current_state: serde_json::Value,
+    model: String,
+    model_name: String,
+    ollama_endpoint: Option<String>,
+    custom_openai_endpoint: Option<String>,
+    custom_openai_api_key: Option<String>,
+    custom_openai_max_tokens: Option<u32>,
+    custom_openai_temperature: Option<f32>,
+    custom_openai_top_p: Option<f32>,
+) -> Result<LiveNotesUpdate, String> {
+    if transcript_chunk.trim().is_empty() {
+        return Err("No transcript text available for live notes".to_string());
+    }
+
+    let provider = LLMProvider::from_str(&model)?;
+    if !matches!(
+        provider,
+        LLMProvider::Ollama | LLMProvider::BuiltInAI | LLMProvider::CustomOpenAI
+    ) {
+        return Err(format!(
+            "Live Notes currently supports local Ollama, built-in AI, or custom OpenAI-compatible providers. Current provider: {}",
+            model
+        ));
+    }
+
+    let api_key = if provider == LLMProvider::CustomOpenAI {
+        custom_openai_api_key.unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    let system_prompt = r#"You update live meeting notes during an active call.
+
+Return only valid JSON. Do not use markdown fences. Do not include commentary.
+Keep items short, specific, and operational. Do not invent people, owners, or deadlines.
+If the transcript chunk has no useful new information, return empty arrays.
+
+JSON shape:
+{
+  "currentTopic": "short current topic or null",
+  "rollingSummary": ["1-2 concise summary bullets"],
+  "keyPoints": ["important facts from the new chunk"],
+  "decisions": [{"text": "decision", "confidence": 0.0}],
+  "actionItems": [{"text": "action", "owner": null, "dueDate": null, "confidence": 0.0}],
+  "openQuestions": ["unresolved questions"],
+  "risks": ["risks or concerns"],
+  "highlights": [{"text": "notable moment"}]
+}"#;
+
+    let user_prompt = format!(
+        "Current live notes state:\n{}\n\nNew transcript chunk:\n{}\n\nUpdate the live notes using only the new transcript chunk and current state.",
+        current_state,
+        transcript_chunk
+    );
+
+    let client = reqwest::Client::new();
+    let app_data_dir = app.path().app_data_dir().ok();
+    let raw = generate_summary(
+        &client,
+        &provider,
+        &model_name,
+        &api_key,
+        system_prompt,
+        &user_prompt,
+        ollama_endpoint.as_deref(),
+        custom_openai_endpoint.as_deref(),
+        custom_openai_max_tokens,
+        custom_openai_temperature,
+        custom_openai_top_p,
+        app_data_dir.as_ref(),
+        None,
+    )
+    .await?;
+
+    let cleaned = clean_llm_markdown_output(&raw);
+    serde_json::from_str::<LiveNotesUpdate>(&cleaned).map_err(|e| {
+        format!(
+            "Live notes model returned invalid JSON: {}. Raw response: {}",
+            e, cleaned
+        )
+    })
 }
 
 /// Saves a meeting summary (Native SQLx implementation)

@@ -27,6 +27,16 @@ export interface ModelConfig {
   topP?: number | null;
 }
 
+export const LIVE_NOTES_SUPPORTED_PROVIDERS: ModelConfig['provider'][] = [
+  'ollama',
+  'builtin-ai',
+  'custom-openai',
+];
+
+export function isLiveNotesProviderSupported(provider: ModelConfig['provider']): boolean {
+  return LIVE_NOTES_SUPPORTED_PROVIDERS.includes(provider);
+}
+
 export interface CustomOpenAIConfig {
   endpoint: string;
   apiKey: string | null;

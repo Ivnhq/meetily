@@ -1,4 +1,5 @@
 use crate::database::repositories::{
+    live_notes::LiveNotesRepository,
     meeting::MeetingsRepository, summary::SummaryProcessesRepository,
     transcript_chunk::TranscriptChunksRepository,
 };
@@ -8,7 +9,13 @@ use crate::summary::processor::clean_llm_markdown_output;
 use crate::summary::service::SummaryService;
 use log::{error as log_error, info as log_info, warn as log_warn};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use tauri::{AppHandle, Manager, Runtime};
+
+const LIVE_NOTES_GENERATION_TIMEOUT: Duration = Duration::from_secs(120);
+const LIVE_NOTES_DEFAULT_MAX_TOKENS: u32 = 512;
+const LIVE_NOTES_DEFAULT_TEMPERATURE: f32 = 0.1;
+const LIVE_NOTES_DEFAULT_TOP_P: f32 = 0.9;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SummaryResponse {
@@ -70,6 +77,40 @@ pub struct LiveNotesUpdate {
     pub highlights: Option<Vec<LiveNotesHighlight>>,
 }
 
+#[tauri::command]
+pub async fn api_get_live_notes<R: Runtime>(
+    _app: AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    meeting_id: String,
+) -> Result<Option<serde_json::Value>, String> {
+    if meeting_id.trim().is_empty() {
+        return Err("meeting_id cannot be empty".to_string());
+    }
+
+    let pool = state.db_manager.pool();
+    LiveNotesRepository::get_state(pool, &meeting_id)
+        .await
+        .map_err(|e| format!("Failed to get live notes: {}", e))
+}
+
+#[tauri::command]
+pub async fn api_save_live_notes<R: Runtime>(
+    _app: AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    meeting_id: String,
+    live_notes: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    if meeting_id.trim().is_empty() {
+        return Err("meeting_id cannot be empty".to_string());
+    }
+
+    let pool = state.db_manager.pool();
+    match LiveNotesRepository::save_state(pool, &meeting_id, &live_notes).await {
+        Ok(saved) => Ok(serde_json::json!({ "saved": saved })),
+        Err(e) => Err(format!("Failed to save live notes: {}", e)),
+    }
+}
+
 /// Generates a small structured update for in-meeting live notes.
 ///
 /// This is intentionally separate from the final summary pipeline: it is fast,
@@ -113,6 +154,8 @@ pub async fn api_generate_live_notes_update<R: Runtime>(
 
 Return only valid JSON. Do not use markdown fences. Do not include commentary.
 Keep items short, specific, and operational. Do not invent people, owners, or deadlines.
+Use transcript timestamp ranges to set transcriptStartMs and transcriptEndMs in milliseconds when evidence is available.
+Only include generated highlights when both transcriptStartMs and transcriptEndMs are known.
 If the transcript chunk has no useful new information, return empty arrays.
 
 JSON shape:
@@ -120,11 +163,11 @@ JSON shape:
   "currentTopic": "short current topic or null",
   "rollingSummary": ["1-2 concise summary bullets"],
   "keyPoints": ["important facts from the new chunk"],
-  "decisions": [{"text": "decision", "confidence": 0.0}],
-  "actionItems": [{"text": "action", "owner": null, "dueDate": null, "confidence": 0.0}],
+  "decisions": [{"text": "decision", "transcriptStartMs": 0, "transcriptEndMs": 0, "confidence": 0.0}],
+  "actionItems": [{"text": "action", "owner": null, "dueDate": null, "transcriptStartMs": 0, "transcriptEndMs": 0, "confidence": 0.0}],
   "openQuestions": ["unresolved questions"],
   "risks": ["risks or concerns"],
-  "highlights": [{"text": "notable moment"}]
+  "highlights": [{"text": "notable moment", "transcriptStartMs": 0, "transcriptEndMs": 0}]
 }"#;
 
     let user_prompt = format!(
@@ -135,7 +178,7 @@ JSON shape:
 
     let client = reqwest::Client::new();
     let app_data_dir = app.path().app_data_dir().ok();
-    let raw = generate_summary(
+    let generation = generate_summary(
         &client,
         &provider,
         &model_name,
@@ -144,13 +187,21 @@ JSON shape:
         &user_prompt,
         ollama_endpoint.as_deref(),
         custom_openai_endpoint.as_deref(),
-        custom_openai_max_tokens,
-        custom_openai_temperature,
-        custom_openai_top_p,
+        custom_openai_max_tokens.or(Some(LIVE_NOTES_DEFAULT_MAX_TOKENS)),
+        custom_openai_temperature.or(Some(LIVE_NOTES_DEFAULT_TEMPERATURE)),
+        custom_openai_top_p.or(Some(LIVE_NOTES_DEFAULT_TOP_P)),
         app_data_dir.as_ref(),
         None,
-    )
-    .await?;
+    );
+
+    let raw = tokio::time::timeout(LIVE_NOTES_GENERATION_TIMEOUT, generation)
+        .await
+        .map_err(|_| {
+            format!(
+                "Live Notes generation timed out after {} seconds. Try a smaller/faster local model or a GPU/accelerated provider.",
+                LIVE_NOTES_GENERATION_TIMEOUT.as_secs()
+            )
+        })??;
 
     let cleaned = clean_llm_markdown_output(&raw);
     serde_json::from_str::<LiveNotesUpdate>(&cleaned).map_err(|e| {

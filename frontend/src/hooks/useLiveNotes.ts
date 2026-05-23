@@ -2,15 +2,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 import { Transcript } from '@/types';
-import { ModelConfig } from '@/services/configService';
+import { isLiveNotesProviderSupported, ModelConfig } from '@/services/configService';
 import {
   createEmptyLiveNotesState,
+  createLiveNotesRecap,
   formatTranscriptChunk,
+  loadLiveNotesFromLocalStorage,
   LiveHighlight,
+  LiveNotesRecap,
   LiveNotesState,
   LiveNotesUpdate,
   mergeLiveNotesUpdate,
+  saveLiveNotesToLocalStorage,
 } from '@/types/liveNotes';
+import { storageService } from '@/services/storageService';
+import { isEditableHotkeyTarget, isLiveNotesHighlightHotkey } from '@/utils/liveNotesHotkeys';
 
 const MIN_AUTO_TRANSCRIPTS = 4;
 const LIVE_NOTES_INTERVAL_MS = 90_000;
@@ -31,8 +37,9 @@ export function useLiveNotes({
 }: UseLiveNotesProps) {
   const effectiveMeetingId = meetingId || 'active-meeting';
   const [liveNotes, setLiveNotes] = useState<LiveNotesState>(() =>
-    createEmptyLiveNotesState(effectiveMeetingId)
+    loadLiveNotesFromLocalStorage(effectiveMeetingId) ?? createEmptyLiveNotesState(effectiveMeetingId)
   );
+  const [latestRecap, setLatestRecap] = useState<LiveNotesRecap | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lastProcessedIndexRef = useRef(0);
@@ -48,14 +55,58 @@ export function useLiveNotes({
   }, [liveNotes]);
 
   useEffect(() => {
-    setLiveNotes(createEmptyLiveNotesState(effectiveMeetingId));
+    let cancelled = false;
+
+    setLiveNotes(loadLiveNotesFromLocalStorage(effectiveMeetingId) ?? createEmptyLiveNotesState(effectiveMeetingId));
+    setLatestRecap(null);
     lastProcessedIndexRef.current = 0;
     setError(null);
-  }, [effectiveMeetingId]);
+
+    if (meetingId) {
+      storageService.getLiveNotes(meetingId)
+        .then((savedLiveNotes) => {
+          if (!cancelled && savedLiveNotes) {
+            setLiveNotes(savedLiveNotes);
+          }
+        })
+        .catch(() => {
+          // A temporary recording id will not exist in SQLite yet.
+        });
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveMeetingId, meetingId]);
+
+  useEffect(() => {
+    saveLiveNotesToLocalStorage(liveNotes);
+  }, [liveNotes]);
+
+  useEffect(() => {
+    if (!meetingId || !liveNotes.updatedAt) return;
+
+    const saveTimer = setTimeout(() => {
+      storageService.saveLiveNotes(meetingId, liveNotes).catch(() => {
+        // Temporary recording ids are cached locally and transferred after SQLite save.
+      });
+    }, 750);
+
+    return () => clearTimeout(saveTimer);
+  }, [meetingId, liveNotes]);
 
   const transcriptText = useMemo(() => formatTranscriptChunk(transcripts), [transcripts]);
 
   const generateUpdate = useCallback(async (mode: 'auto' | 'manual' | 'recap' = 'manual') => {
+    if (!isLiveNotesProviderSupported(modelConfig.provider)) {
+      const message = 'Live Notes supports Ollama, Built-in AI, or custom OpenAI-compatible providers.';
+      setError(message);
+      if (mode !== 'auto') {
+        toast.error('Live notes model not supported', { description: message });
+      }
+      return;
+    }
+
     const currentTranscripts = latestTranscriptsRef.current;
     const startIndex = mode === 'recap'
       ? Math.max(currentTranscripts.length - 8, 0)
@@ -84,11 +135,14 @@ export function useLiveNotes({
         customOpenaiTopP: modelConfig.topP || null,
       });
 
+      if (mode === 'recap') {
+        setLatestRecap(createLiveNotesRecap(response));
+        return;
+      }
+
       setLiveNotes((current) => mergeLiveNotesUpdate(current, response));
 
-      if (mode !== 'recap') {
-        lastProcessedIndexRef.current = currentTranscripts.length;
-      }
+      lastProcessedIndexRef.current = currentTranscripts.length;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
@@ -108,19 +162,6 @@ export function useLiveNotes({
     modelConfig.temperature,
     modelConfig.topP,
   ]);
-
-  useEffect(() => {
-    if (!isRecording) return;
-
-    const interval = setInterval(() => {
-      const newTranscriptCount = latestTranscriptsRef.current.length - lastProcessedIndexRef.current;
-      if (newTranscriptCount >= MIN_AUTO_TRANSCRIPTS) {
-        generateUpdate('auto');
-      }
-    }, LIVE_NOTES_INTERVAL_MS);
-
-    return () => clearInterval(interval);
-  }, [isRecording, generateUpdate]);
 
   const markHighlight = useCallback(() => {
     const currentTranscripts = latestTranscriptsRef.current;
@@ -156,8 +197,36 @@ export function useLiveNotes({
     toast.success('Highlight marked');
   }, []);
 
+  useEffect(() => {
+    if (!isRecording) return;
+
+    const interval = setInterval(() => {
+      const newTranscriptCount = latestTranscriptsRef.current.length - lastProcessedIndexRef.current;
+      if (newTranscriptCount >= MIN_AUTO_TRANSCRIPTS) {
+        generateUpdate('auto');
+      }
+    }, LIVE_NOTES_INTERVAL_MS);
+
+    return () => clearInterval(interval);
+  }, [isRecording, generateUpdate]);
+
+  useEffect(() => {
+    if (!isRecording || typeof window === 'undefined') return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (isEditableHotkeyTarget(event.target) || !isLiveNotesHighlightHotkey(event)) return;
+
+      event.preventDefault();
+      markHighlight();
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isRecording, markHighlight]);
+
   return {
     liveNotes,
+    latestRecap,
     transcriptText,
     isUpdating,
     error,

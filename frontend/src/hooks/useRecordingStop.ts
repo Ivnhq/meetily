@@ -8,6 +8,7 @@ import { useRecordingState, RecordingStatus } from '@/contexts/RecordingStateCon
 import { storageService } from '@/services/storageService';
 import { transcriptService } from '@/services/transcriptService';
 import Analytics from '@/lib/analytics';
+import { consumeLiveNotesFromLocalStorage } from '@/types/liveNotes';
 
 type SummaryStatus = 'idle' | 'processing' | 'summarizing' | 'regenerating' | 'completed' | 'error';
 
@@ -52,6 +53,7 @@ export function useRecordingStop(
     flushBuffer,
     clearTranscripts,
     meetingTitle,
+    currentMeetingId,
     markMeetingAsSaved,
   } = useTranscripts();
 
@@ -265,6 +267,22 @@ export function useRecordingStop(
           console.log('   Transcripts:', freshTranscripts.length);
           console.log('   folder_path:', folderPath);
 
+          const temporaryLiveNotesId = currentMeetingId || sessionStorage.getItem('indexeddb_current_meeting_id');
+          if (temporaryLiveNotesId) {
+            const liveNotes = consumeLiveNotesFromLocalStorage(temporaryLiveNotesId);
+            if (liveNotes?.updatedAt) {
+              try {
+                await storageService.saveLiveNotes(meetingId, {
+                  ...liveNotes,
+                  meetingId,
+                });
+                console.log('✅ Live Notes saved for meeting:', meetingId);
+              } catch (error) {
+                console.warn('Could not save Live Notes for meeting:', error);
+              }
+            }
+          }
+
           // Mark meeting as saved in IndexedDB (for recovery system)
           await markMeetingAsSaved();
 
@@ -400,6 +418,7 @@ export function useRecordingStop(
     flushBuffer,
     clearTranscripts,
     meetingTitle,
+    currentMeetingId,
     markMeetingAsSaved,
     refetchMeetings,
     setCurrentMeeting,

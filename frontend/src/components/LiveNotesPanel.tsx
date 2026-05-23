@@ -1,13 +1,14 @@
 'use client';
 
 import type React from 'react';
-import { AlertCircle, CheckCircle2, CircleHelp, Highlighter, ListChecks, Loader2, RefreshCw, Sparkles } from 'lucide-react';
+import { AlertCircle, CheckCircle2, CircleHelp, Clock3, Highlighter, ListChecks, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { LiveNotesState } from '@/types/liveNotes';
+import { LiveNotesRecap, LiveNotesState } from '@/types/liveNotes';
 
 interface LiveNotesPanelProps {
   liveNotes: LiveNotesState;
+  latestRecap: LiveNotesRecap | null;
   isRecording: boolean;
   isUpdating: boolean;
   error: string | null;
@@ -18,6 +19,35 @@ interface LiveNotesPanelProps {
 
 function EmptyList({ text }: { text: string }) {
   return <p className="text-sm text-gray-400">{text}</p>;
+}
+
+function formatEvidenceTime(ms: number): string {
+  const totalSeconds = Math.max(Math.floor(ms / 1000), 0);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function EvidenceRange({
+  startMs,
+  endMs,
+}: {
+  startMs?: number;
+  endMs?: number;
+}) {
+  if (typeof startMs !== 'number' && typeof endMs !== 'number') return null;
+
+  const label = typeof startMs === 'number' && typeof endMs === 'number'
+    ? `${formatEvidenceTime(startMs)}-${formatEvidenceTime(endMs)}`
+    : formatEvidenceTime(startMs ?? endMs ?? 0);
+
+  return (
+    <span className="mt-1 inline-flex items-center gap-1 text-xs text-gray-400">
+      <Clock3 className="h-3 w-3" />
+      {label}
+    </span>
+  );
 }
 
 function StringList({ items, empty }: { items: string[]; empty: string }) {
@@ -56,6 +86,7 @@ function Section({
 
 export function LiveNotesPanel({
   liveNotes,
+  latestRecap,
   isRecording,
   isUpdating,
   error,
@@ -139,6 +170,29 @@ export function LiveNotesPanel({
         )}
 
         <div className="space-y-6">
+          {latestRecap && (
+            <Section title="Latest Recap" icon={<CircleHelp className="h-3.5 w-3.5" />}>
+              <div className="space-y-2 border-l-2 border-blue-200 pl-3">
+                <p className="text-xs text-gray-500">
+                  Generated {new Date(latestRecap.generatedAt).toLocaleTimeString()}
+                </p>
+                {latestRecap.currentTopic && (
+                  <p className="text-sm font-medium leading-relaxed text-gray-800">
+                    {latestRecap.currentTopic}
+                  </p>
+                )}
+                <StringList
+                  items={[
+                    ...latestRecap.rollingSummary,
+                    ...latestRecap.keyPoints,
+                    ...latestRecap.openQuestions.map((question) => `Question: ${question}`),
+                  ]}
+                  empty="No recap details returned."
+                />
+              </div>
+            </Section>
+          )}
+
           <Section title="Current Topic" icon={<Sparkles className="h-3.5 w-3.5" />}>
             <p className="text-sm leading-relaxed text-gray-800">
               {liveNotes.currentTopic || 'Waiting for the meeting shape to emerge.'}
@@ -156,8 +210,11 @@ export function LiveNotesPanel({
               <ul className="space-y-2">
                 {liveNotes.actionItems.map((item, index) => (
                   <li key={`${item.text}-${index}`} className="text-sm leading-relaxed text-gray-700">
-                    {item.text}
-                    {item.owner && <span className="ml-1 text-gray-500">({item.owner})</span>}
+                    <div>
+                      {item.text}
+                      {item.owner && <span className="ml-1 text-gray-500">({item.owner})</span>}
+                    </div>
+                    <EvidenceRange startMs={item.transcriptStartMs} endMs={item.transcriptEndMs} />
                   </li>
                 ))}
               </ul>
@@ -171,7 +228,8 @@ export function LiveNotesPanel({
               <ul className="space-y-2">
                 {liveNotes.decisions.map((decision, index) => (
                   <li key={`${decision.text}-${index}`} className="text-sm leading-relaxed text-gray-700">
-                    {decision.text}
+                    <div>{decision.text}</div>
+                    <EvidenceRange startMs={decision.transcriptStartMs} endMs={decision.transcriptEndMs} />
                   </li>
                 ))}
               </ul>
@@ -189,7 +247,8 @@ export function LiveNotesPanel({
               <ul className="space-y-2">
                 {liveNotes.highlights.slice().reverse().map((highlight) => (
                   <li key={highlight.id} className="rounded-md border border-gray-200 bg-white p-2 text-sm leading-relaxed text-gray-700">
-                    {highlight.text || 'Marked highlight'}
+                    <div>{highlight.text || 'Marked highlight'}</div>
+                    <EvidenceRange startMs={highlight.transcriptStartMs} endMs={highlight.transcriptEndMs} />
                   </li>
                 ))}
               </ul>

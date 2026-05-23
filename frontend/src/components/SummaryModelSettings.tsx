@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { ModelConfig, ModelSettingsModal } from '@/components/ModelSettingsModal';
 import { Switch } from './ui/switch';
 import { useConfig } from '@/contexts/ConfigContext';
+import { LiveNotesModelSettings } from '@/components/LiveNotesModelSettings';
 
 interface SummaryModelSettingsProps {
   refetchTrigger?: number; // Change this to trigger refetch
@@ -146,6 +147,8 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
           skipInitialFetch={true}
         />
       </div>
+
+      <LiveNotesModelSettings />
     </div>
   );
 }

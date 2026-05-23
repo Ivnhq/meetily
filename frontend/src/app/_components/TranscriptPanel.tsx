@@ -34,7 +34,7 @@ export function TranscriptPanel({
 }: TranscriptPanelProps) {
   // Contexts
   const { transcripts, transcriptContainerRef, copyTranscript, currentMeetingId } = useTranscripts();
-  const { transcriptModelConfig, modelConfig } = useConfig();
+  const { transcriptModelConfig, effectiveLiveNotesModelConfig } = useConfig();
   const { isRecording, isPaused } = useRecordingState();
   const { checkPermissions, isChecking, hasSystemAudio, hasMicrophone } = usePermissionCheck();
   const isLinux = useIsLinux();
@@ -53,6 +53,7 @@ export function TranscriptPanel({
 
   const {
     liveNotes,
+    latestRecap,
     isUpdating: isUpdatingLiveNotes,
     error: liveNotesError,
     generateUpdate,
@@ -61,7 +62,7 @@ export function TranscriptPanel({
     meetingId: currentMeetingId,
     transcripts,
     isRecording,
-    modelConfig,
+    modelConfig: effectiveLiveNotesModelConfig,
   });
 
   return (
@@ -137,6 +138,7 @@ export function TranscriptPanel({
 
       <LiveNotesPanel
         liveNotes={liveNotes}
+        latestRecap={latestRecap}
         isRecording={isRecording}
         isUpdating={isUpdatingLiveNotes}
         error={liveNotesError}

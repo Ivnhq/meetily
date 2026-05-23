@@ -633,6 +633,8 @@ pub fn run() {
             // Summary commands
             summary::commands::api_process_transcript,
             summary::commands::api_generate_live_notes_update,
+            summary::commands::api_get_live_notes,
+            summary::commands::api_save_live_notes,
             summary::commands::api_get_summary,
             summary::commands::api_save_meeting_summary,
             summary::commands::api_cancel_summary,

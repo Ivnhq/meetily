@@ -1,4 +1,5 @@
 use crate::database::repositories::{
+    live_notes::LiveNotesRepository,
     meeting::MeetingsRepository, setting::SettingsRepository, summary::SummaryProcessesRepository,
 };
 use crate::summary::llm_client::LLMProvider;
@@ -219,6 +220,18 @@ impl SummaryService {
         // Get app data directory for BuiltInAI provider
         let app_data_dir = _app.path().app_data_dir().ok();
 
+        let live_notes_context = match LiveNotesRepository::get_state(&pool, &meeting_id).await {
+            Ok(Some(value)) => {
+                info!("✓ Found persisted Live Notes for summary context");
+                serde_json::to_string_pretty(&value).ok()
+            }
+            Ok(None) => None,
+            Err(e) => {
+                warn!("Failed to load Live Notes context for summary: {}", e);
+                None
+            }
+        };
+
         // Generate summary
         let client = reqwest::Client::new();
         let result = generate_meeting_summary(
@@ -229,6 +242,7 @@ impl SummaryService {
             &text,
             &custom_prompt,
             &template_id,
+            live_notes_context.as_deref(),
             token_threshold,
             ollama_endpoint.as_deref(),
             custom_openai_endpoint.as_deref(),

@@ -158,3 +158,9 @@ The LLM should return structured JSON. The app should validate and merge the upd
 - Confirm generated actions/decisions link back to transcript timestamps.
 - Confirm the final summary can be generated from transcript plus LiveNotesState.
 
+## Local Smoke Notes
+
+- 2026-05-23: `gemma3:4b` was installed in Ollama and tested on a CPU-only Linux environment.
+- The first JSON prompt attempt timed out after the model loaded on CPU with one thread.
+- A shorter prompt with a smaller output cap and `num_thread=4` still produced no response inside four minutes.
+- Treat Gemma 3 4B CPU-only Live Notes as a performance risk until tested with GPU/BLAS acceleration or a smaller local model.

@@ -40,7 +40,7 @@ if [[ -x /opt/homebrew/bin/brew ]]; then
 fi
 
 echo "Installing required build tools."
-brew install git node pnpm rustup cmake ollama
+brew install git node rustup cmake ollama
 
 if ! command -v cargo >/dev/null 2>&1; then
   RUSTUP_BIN=""
@@ -94,7 +94,10 @@ cp target/release/llama-helper frontend/src-tauri/binaries/llama-helper-aarch64-
 
 echo "Building Meetily macOS app."
 cd frontend
-npm run tauri:build:metal
+TAURI_APP_BUNDLE_CONFIG="$(mktemp)"
+trap 'rm -f "$TAURI_APP_BUNDLE_CONFIG"' EXIT
+printf '%s\n' '{"bundle":{"targets":["app"]}}' > "$TAURI_APP_BUNDLE_CONFIG"
+npx tauri build --config "$TAURI_APP_BUNDLE_CONFIG" -- --features metal
 cd ..
 
 DMG_PATH="$(find target frontend/src-tauri/target -path "*/bundle/dmg/*.dmg" -type f 2>/dev/null | head -1)"

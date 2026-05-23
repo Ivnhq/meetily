@@ -40,12 +40,27 @@ if [[ -x /opt/homebrew/bin/brew ]]; then
 fi
 
 echo "Installing required build tools."
-brew install git node rustup cmake ollama
+brew install git node pnpm rustup cmake ollama
 
 if ! command -v cargo >/dev/null 2>&1; then
-  rustup-init -y --profile minimal --default-toolchain stable
-  # shellcheck source=/dev/null
-  source "$HOME/.cargo/env"
+  RUSTUP_BIN=""
+  if command -v rustup >/dev/null 2>&1; then
+    RUSTUP_BIN="$(command -v rustup)"
+  elif [[ -x "$(brew --prefix rustup)/bin/rustup" ]]; then
+    RUSTUP_BIN="$(brew --prefix rustup)/bin/rustup"
+  fi
+
+  if [[ -n "$RUSTUP_BIN" ]]; then
+    "$RUSTUP_BIN" default stable
+  else
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --profile minimal --default-toolchain stable
+  fi
+
+  if [[ -f "$HOME/.cargo/env" ]]; then
+    # shellcheck source=/dev/null
+    source "$HOME/.cargo/env"
+  fi
 fi
 
 if ! command -v cargo >/dev/null 2>&1 && [[ -f "$HOME/.cargo/env" ]]; then

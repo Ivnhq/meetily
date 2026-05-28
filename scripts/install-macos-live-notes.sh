@@ -96,7 +96,7 @@ echo "Building Meetily macOS app."
 cd frontend
 TAURI_APP_BUNDLE_CONFIG="$(mktemp)"
 trap 'rm -f "$TAURI_APP_BUNDLE_CONFIG"' EXIT
-printf '%s\n' '{"bundle":{"targets":["app"]}}' > "$TAURI_APP_BUNDLE_CONFIG"
+printf '%s\n' '{"bundle":{"targets":["app"],"createUpdaterArtifacts":false}}' > "$TAURI_APP_BUNDLE_CONFIG"
 npx tauri build --config "$TAURI_APP_BUNDLE_CONFIG" -- --features metal
 cd ..
 

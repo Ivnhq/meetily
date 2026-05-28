@@ -4,6 +4,7 @@ set -euo pipefail
 BRANCH="${MEETILY_BRANCH:-ivnhq/live-notes-roadmap}"
 REPO_URL="${MEETILY_REPO_URL:-https://github.com/Ivnhq/meetily.git}"
 INSTALL_DIR="${MEETILY_INSTALL_DIR:-$HOME/Applications/Meetily Live Notes Source}"
+APP_INSTALL_PATH="${MEETILY_APP_INSTALL_PATH:-$HOME/Applications/Meetily Live Notes.app}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "This installer must be run on macOS."
@@ -18,6 +19,7 @@ fi
 echo "Meetily Live Notes macOS installer"
 echo "Branch: $BRANCH"
 echo "Install source: $INSTALL_DIR"
+echo "Install app: $APP_INSTALL_PATH"
 echo ""
 
 if ! xcode-select -p >/dev/null 2>&1; then
@@ -110,8 +112,14 @@ if [[ -n "$DMG_PATH" ]]; then
   open "$DMG_PATH"
 elif [[ -n "$APP_PATH" ]]; then
   echo ""
-  echo "Build complete: $APP_PATH"
-  open -R "$APP_PATH"
+  echo "Installing app to: $APP_INSTALL_PATH"
+  mkdir -p "$(dirname "$APP_INSTALL_PATH")"
+  rm -rf "$APP_INSTALL_PATH"
+  ditto "$APP_PATH" "$APP_INSTALL_PATH"
+  mdimport "$APP_INSTALL_PATH" >/dev/null 2>&1 || true
+  echo "Build complete: $APP_INSTALL_PATH"
+  open -R "$APP_INSTALL_PATH"
+  open "$APP_INSTALL_PATH"
 else
   echo "Build finished, but no DMG or app bundle was found."
   exit 1

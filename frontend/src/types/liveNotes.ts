@@ -170,7 +170,8 @@ export function formatTranscriptChunk(transcripts: Transcript[]): string {
         ? `${startStamp}-${endStamp} | ${startMs}-${endMs}ms`
         : `${startStamp} | ${startMs}ms`;
 
-      return `[${range}] ${transcript.text}`;
+      const label = transcript.speaker || transcript.source;
+      return `[${range}] ${label ? `${label}: ` : ''}${transcript.text}`;
     })
     .join('\n');
 }

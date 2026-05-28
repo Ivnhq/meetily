@@ -36,6 +36,10 @@ function convertTranscriptsToSegments(transcripts: Transcript[]): TranscriptSegm
         timestamp: t.audio_start_time ?? 0,
         endTime: t.audio_end_time,
         text: t.text,
+        source: t.source,
+        speaker: t.speaker,
+        speaker_id: t.speaker_id,
+        source_overlap: t.source_overlap,
         confidence: t.confidence,
     }));
 }

@@ -103,6 +103,34 @@ Acceptance criteria:
 - User-marked highlights are preserved.
 - Existing final summary behavior still works if live notes are disabled.
 
+### P1: Preserve Source Labels And Speaker Clusters
+
+Labels: `enhancement`, `ivnhq`, `live-notes`, `P1`
+
+Preserve microphone/system source labels and local speaker clusters through live transcription, persistence, recovery, copy, summaries, and transcript display.
+
+Acceptance criteria:
+
+- Microphone transcript segments are labeled `Local speaker`, or `Local speaker N` when multiple local clusters are detected.
+- System transcript segments are labeled `Remote speaker N`.
+- Segments retain raw source values: `Microphone` or `System`.
+- Overlap metadata is retained when microphone audio overlaps system audio.
+- The UI and copied transcript show speaker labels without claiming individual remote participant names.
+
+### P2: Add Post-Meeting Speaker Diarization Pass
+
+Labels: `enhancement`, `ivnhq`, `live-notes`, `P2`
+
+Add a post-meeting diarization pass that can split source-labeled audio into speaker clusters and optionally map those clusters to names.
+
+Acceptance criteria:
+
+- Diarization runs after recording/import/retranscription, not in the first realtime path.
+- Remote system audio can be split into stable speaker cluster ids.
+- User can rename a speaker cluster.
+- Renamed speakers are saved back to transcript metadata.
+- Source labels remain available even after speaker names are assigned.
+
 ### P2: Export Live Notes To Markdown / Obsidian
 
 Labels: `enhancement`, `ivnhq`, `live-notes`, `P2`
@@ -115,4 +143,3 @@ Acceptance criteria:
 - Frontmatter includes meeting title, date, attendees when available, model provider, and source app.
 - Action items and decisions link to transcript timestamps where possible.
 - Output can be dropped into Obsidian without cleanup.
-

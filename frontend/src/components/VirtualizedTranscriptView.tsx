@@ -68,6 +68,9 @@ const TranscriptSegment = memo(function TranscriptSegment({
     id,
     timestamp,
     text,
+    speaker,
+    source,
+    sourceOverlap,
     confidence,
     isStreaming,
     showConfidence,
@@ -75,11 +78,15 @@ const TranscriptSegment = memo(function TranscriptSegment({
     id: string;
     timestamp: number;
     text: string;
+    speaker?: string;
+    source?: string;
+    sourceOverlap?: boolean;
     confidence?: number;
     isStreaming: boolean;
     showConfidence: boolean;
 }) {
     const displayText = cleanStopWords(text) || (text.trim() === '' ? '[Silence]' : text);
+    const speakerLabel = speaker || source;
 
     return (
         <div id={`segment-${id}`} className="mb-3">
@@ -97,6 +104,16 @@ const TranscriptSegment = memo(function TranscriptSegment({
                     </TooltipContent>
                 </Tooltip>
                 <div className="flex-1">
+                    {speakerLabel && (
+                        <div className="mb-1 flex items-center gap-2">
+                            <span className="text-[11px] font-medium uppercase tracking-normal text-gray-500">
+                                {speakerLabel}
+                            </span>
+                            {sourceOverlap && (
+                                <span className="text-[11px] text-amber-600">overlap</span>
+                            )}
+                        </div>
+                    )}
                     {isStreaming ? (
                         <div className="bg-gray-100 border border-gray-200 rounded-lg px-3 py-2">
                             <p className="text-base text-gray-800 leading-relaxed">{displayText}</p>
@@ -293,6 +310,9 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         id={segment.id}
                                         timestamp={segment.timestamp}
                                         text={getDisplayText(segment)}
+                                        speaker={segment.speaker}
+                                        source={segment.source}
+                                        sourceOverlap={segment.source_overlap}
                                         confidence={segment.confidence}
                                         isStreaming={isStreaming}
                                         showConfidence={showConfidence}
@@ -349,6 +369,9 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         id={segment.id}
                                         timestamp={segment.timestamp}
                                         text={getDisplayText(segment)}
+                                        speaker={segment.speaker}
+                                        source={segment.source}
+                                        sourceOverlap={segment.source_overlap}
                                         confidence={segment.confidence}
                                         isStreaming={isStreaming}
                                         showConfidence={showConfidence}

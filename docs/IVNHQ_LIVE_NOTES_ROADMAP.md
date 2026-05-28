@@ -13,6 +13,17 @@ Meetily already has the right local primitives:
 
 The next product gap is meeting-time usefulness: while a call is still happening, the user should see structured notes, decisions, action items, and quick recaps without waiting for the final post-meeting summary.
 
+## Source And Speaker Labeling Direction
+
+Treat speaker identity as a layered problem:
+
+1. **Realtime source labels:** preserve whether transcript text came from the microphone or system audio path.
+2. **Realtime overlap policy:** suppress or mark microphone audio while system audio is active to reduce duplicate remote-speaker bleed.
+3. **Local speaker clustering:** split each source into stable speaker clusters such as `Remote speaker 1` and `Remote speaker 2`.
+4. **Speaker naming:** assign human-readable names from user correction, meeting context, or attendee metadata after diarization.
+
+The MVP should not claim true participant identity from ScreenCaptureKit alone. The first reliable labels are source-aware speaker clusters such as `Local speaker`, `Remote speaker 1`, and `Remote speaker 2`.
+
 ## Recommendation
 
 Build **Live Notes Mode** first.

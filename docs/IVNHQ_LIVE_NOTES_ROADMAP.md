@@ -175,3 +175,10 @@ The LLM should return structured JSON. The app should validate and merge the upd
 - The first JSON prompt attempt timed out after the model loaded on CPU with one thread.
 - A shorter prompt with a smaller output cap and `num_thread=4` still produced no response inside four minutes.
 - Treat Gemma 3 4B CPU-only Live Notes as a performance risk until tested with GPU/BLAS acceleration or a smaller local model.
+
+## Custom Build Update Safety
+
+- Build and install the Ivnhq macOS app through `scripts/install-macos-live-notes.sh`.
+- The custom build disables in-app update checks and points its native updater away from the official Meetily release feed.
+- Do not enable the official release feed for the custom app: an official updater payload replaces the forked bundle and removes Live Notes features.
+- Update the source branch and rebuild with the installer instead.

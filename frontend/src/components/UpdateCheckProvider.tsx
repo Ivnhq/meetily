@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { useUpdateCheck } from '@/hooks/useUpdateCheck';
-import { UpdateInfo } from '@/services/updateService';
+import { UpdateInfo, updatesDisabledForThisBuild } from '@/services/updateService';
 import { UpdateDialog } from './UpdateDialog';
 import { setUpdateDialogCallback, showUpdateNotification } from './UpdateNotification';
 
@@ -23,7 +23,7 @@ export function UpdateCheckProvider({ children }: { children: React.ReactNode })
   }, []);
 
   const { updateInfo, isChecking, checkForUpdates } = useUpdateCheck({
-    checkOnMount: true,
+    checkOnMount: !updatesDisabledForThisBuild,
     showNotification: true,
     onUpdateAvailable: (info) => {
       // Show notification, dialog will be shown when user clicks notification
@@ -42,6 +42,7 @@ export function UpdateCheckProvider({ children }: { children: React.ReactNode })
   // Listen for tray menu events
   useEffect(() => {
     const handleTrayCheck = () => {
+      if (updatesDisabledForThisBuild) return;
       checkForUpdates(true); // Force check from tray
       setShowDialog(true);
     };
@@ -60,11 +61,13 @@ export function UpdateCheckProvider({ children }: { children: React.ReactNode })
       }}
     >
       {children}
-      <UpdateDialog
-        open={showDialog}
-        onOpenChange={setShowDialog}
-        updateInfo={updateInfo}
-      />
+      {!updatesDisabledForThisBuild && (
+        <UpdateDialog
+          open={showDialog}
+          onOpenChange={setShowDialog}
+          updateInfo={updateInfo}
+        />
+      )}
     </UpdateCheckContext.Provider>
   );
 }

@@ -9,7 +9,12 @@ import {
   DialogTitle,
 } from './ui/dialog';
 import { Button } from './ui/button';
-import { updateService, UpdateInfo, UpdateProgress } from '@/services/updateService';
+import {
+  updateService,
+  UpdateInfo,
+  UpdateProgress,
+  updatesDisabledForThisBuild,
+} from '@/services/updateService';
 import { check, Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { toast } from 'sonner';
@@ -27,6 +32,8 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
   const [update, setUpdate] = useState<Update | null>(null);
 
   useEffect(() => {
+    if (updatesDisabledForThisBuild) return;
+
     if (open && updateInfo?.available) {
       // Reset state when dialog opens
       setIsDownloading(false);
@@ -54,6 +61,11 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
   }, [open, updateInfo]);
 
   const handleDownloadAndInstall = async () => {
+    if (updatesDisabledForThisBuild) {
+      setError('Updates are disabled for this custom build');
+      return;
+    }
+
     // Get update object if not already available
     let updateToUse: Update | null = update;
     if (!updateToUse) {

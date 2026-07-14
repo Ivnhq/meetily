@@ -41,8 +41,22 @@ if [[ -x /opt/homebrew/bin/brew ]]; then
   eval "$(/opt/homebrew/bin/brew shellenv)"
 fi
 
-echo "Installing required build tools."
-brew install git node rustup cmake ollama
+echo "Checking required build tools."
+MISSING_FORMULAE=()
+command -v git >/dev/null 2>&1 || MISSING_FORMULAE+=(git)
+command -v node >/dev/null 2>&1 || MISSING_FORMULAE+=(node)
+if ! command -v cargo >/dev/null 2>&1 && [[ ! -x "$HOME/.cargo/bin/cargo" ]]; then
+  MISSING_FORMULAE+=(rustup)
+fi
+command -v cmake >/dev/null 2>&1 || MISSING_FORMULAE+=(cmake)
+command -v ollama >/dev/null 2>&1 || MISSING_FORMULAE+=(ollama)
+
+if [[ "${#MISSING_FORMULAE[@]}" -gt 0 ]]; then
+  echo "Installing missing build tools: ${MISSING_FORMULAE[*]}"
+  HOMEBREW_NO_AUTO_UPDATE=1 brew install "${MISSING_FORMULAE[@]}"
+else
+  echo "Required build tools are already installed."
+fi
 
 if ! command -v cargo >/dev/null 2>&1; then
   RUSTUP_BIN=""
@@ -98,12 +112,32 @@ echo "Building Meetily macOS app."
 cd frontend
 TAURI_APP_BUNDLE_CONFIG="$(mktemp)"
 trap 'rm -f "$TAURI_APP_BUNDLE_CONFIG"' EXIT
-printf '%s\n' '{"bundle":{"targets":["app"],"createUpdaterArtifacts":false}}' > "$TAURI_APP_BUNDLE_CONFIG"
-npx tauri build --config "$TAURI_APP_BUNDLE_CONFIG" -- --features metal
+printf '%s\n' '{"bundle":{"targets":["app"],"createUpdaterArtifacts":false},"plugins":{"updater":{"endpoints":["https://github.com/Ivnhq/meetily/releases/latest/download/latest.json"]}}}' > "$TAURI_APP_BUNDLE_CONFIG"
+NEXT_PUBLIC_MEETILY_DISABLE_UPDATES=1 \
+  npx tauri build --config "$TAURI_APP_BUNDLE_CONFIG" -- --features metal
 cd ..
 
-DMG_PATH="$(find target frontend/src-tauri/target -path "*/bundle/dmg/*.dmg" -type f 2>/dev/null | head -1)"
-APP_PATH="$(find target frontend/src-tauri/target -path "*/bundle/macos/*.app" -type d 2>/dev/null | head -1)"
+find_first_bundle() {
+  local bundle_pattern="$1"
+  local bundle_type="$2"
+  local search_root
+  local result
+
+  for search_root in "$INSTALL_DIR/target" "$INSTALL_DIR/frontend/src-tauri/target"; do
+    if [[ -d "$search_root" ]]; then
+      result="$(find "$search_root" -path "$bundle_pattern" -type "$bundle_type" -print -quit)"
+      if [[ -n "$result" ]]; then
+        printf '%s\n' "$result"
+        return 0
+      fi
+    fi
+  done
+
+  return 0
+}
+
+DMG_PATH="$(find_first_bundle "*/bundle/dmg/*.dmg" f)"
+APP_PATH="$(find_first_bundle "*/bundle/macos/*.app" d)"
 
 if [[ -n "$DMG_PATH" ]]; then
   echo ""

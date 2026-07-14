@@ -27,6 +27,8 @@
         "tauri:build:hipblas": "tauri build -- --features hipblas",
         "lint": "next lint",
         "test": "vitest run",
+        "test:upstream": "bun test tests/lib/blocknote-markdown.test.ts tests/lib/summary-language-preferences.test.js && node tests/lib/onboarding-summary-model.test.mjs",
+        "test:all": "npm test && npm run test:upstream",
         "test:watch": "vitest",
         "typecheck": "tsc --noEmit"
     },

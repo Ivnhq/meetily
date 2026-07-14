@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BRANCH="${MEETILY_BRANCH:-ivnhq/live-notes-roadmap}"
+BRANCH="${MEETILY_BRANCH:-codex/meetily-all-phases}"
 REPO_URL="${MEETILY_REPO_URL:-https://github.com/Ivnhq/meetily.git}"
 INSTALL_DIR="${MEETILY_INSTALL_DIR:-$HOME/Applications/Meetily Live Notes Source}"
 APP_INSTALL_PATH="${MEETILY_APP_INSTALL_PATH:-$HOME/Applications/Meetily Live Notes.app}"
@@ -45,6 +45,7 @@ echo "Checking required build tools."
 MISSING_FORMULAE=()
 command -v git >/dev/null 2>&1 || MISSING_FORMULAE+=(git)
 command -v node >/dev/null 2>&1 || MISSING_FORMULAE+=(node)
+command -v pnpm >/dev/null 2>&1 || MISSING_FORMULAE+=(pnpm)
 if ! command -v cargo >/dev/null 2>&1 && [[ ! -x "$HOME/.cargo/bin/cargo" ]]; then
   MISSING_FORMULAE+=(rustup)
 fi
@@ -100,13 +101,18 @@ cd "$INSTALL_DIR"
 
 echo "Installing frontend dependencies."
 cd frontend
-npm install
+pnpm install --frozen-lockfile
 cd ..
 
 echo "Building local LLM helper with Metal acceleration."
 cargo build --release -p llama-helper --features metal
 mkdir -p frontend/src-tauri/binaries
 cp target/release/llama-helper frontend/src-tauri/binaries/llama-helper-aarch64-apple-darwin
+
+echo "Building the read-only Meetily CLI."
+TAURI_CONFIG='{"bundle":{"externalBin":["binaries/llama-helper","binaries/ffmpeg"]}}' \
+  cargo build --release -p meetily --bin meetily-cli --features metal
+cp target/release/meetily-cli frontend/src-tauri/binaries/meetily-cli-aarch64-apple-darwin
 
 echo "Building Meetily macOS app."
 cd frontend
@@ -138,6 +144,14 @@ find_first_bundle() {
 
 DMG_PATH="$(find_first_bundle "*/bundle/dmg/*.dmg" f)"
 APP_PATH="$(find_first_bundle "*/bundle/macos/*.app" d)"
+
+if [[ -n "$APP_PATH" ]]; then
+  BUNDLE_EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_PATH/Contents/Info.plist")"
+  if [[ "$BUNDLE_EXECUTABLE" != "meetily" || ! -x "$APP_PATH/Contents/MacOS/meetily" ]]; then
+    echo "Built app has an invalid main executable: $BUNDLE_EXECUTABLE"
+    exit 1
+  fi
+fi
 
 if [[ -n "$DMG_PATH" ]]; then
   echo ""

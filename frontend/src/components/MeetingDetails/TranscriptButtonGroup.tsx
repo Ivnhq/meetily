@@ -3,10 +3,13 @@
 import { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
-import { Copy, FolderOpen, RefreshCw } from 'lucide-react';
+import { BookOpen, Copy, FolderOpen, RefreshCw } from 'lucide-react';
 import Analytics from '@/lib/analytics';
 import { RetranscribeDialog } from './RetranscribeDialog';
 import { useConfig } from '@/contexts/ConfigContext';
+import { open } from '@tauri-apps/plugin-dialog';
+import { invoke } from '@tauri-apps/api/core';
+import { toast } from 'sonner';
 
 
 interface TranscriptButtonGroupProps {
@@ -37,6 +40,22 @@ export function TranscriptButtonGroup({
     }
   }, [onRefetchTranscripts]);
 
+  const exportToObsidian = useCallback(async () => {
+    if (!meetingId) return;
+    const vaultPath = await open({ directory: true, multiple: false, title: 'Choose your Obsidian vault' });
+    if (!vaultPath) return;
+    try {
+      const notePath = await invoke<string>('api_export_meeting_to_obsidian', {
+        meetingId,
+        vaultPath,
+        folder: 'Meetily',
+      });
+      toast.success('Meeting exported to Obsidian', { description: notePath });
+    } catch (error) {
+      toast.error('Obsidian export failed', { description: String(error) });
+    }
+  }, [meetingId]);
+
   return (
     <div className="flex items-center justify-center w-full gap-2">
       <ButtonGroup>
@@ -53,6 +72,18 @@ export function TranscriptButtonGroup({
           <Copy />
           <span className="hidden lg:inline">Copy</span>
         </Button>
+
+        {meetingId && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void exportToObsidian()}
+            title="Export this meeting to an Obsidian vault"
+          >
+            <BookOpen size={18} />
+            <span className="hidden lg:inline">Obsidian</span>
+          </Button>
+        )}
 
         <Button
           size="sm"

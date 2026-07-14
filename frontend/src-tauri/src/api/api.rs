@@ -196,6 +196,8 @@ pub struct TranscriptSegment {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speaker_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub speaker_fingerprint: Option<Vec<f32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_overlap: Option<bool>,
     // NEW: Recording-relative timestamps for playback synchronization
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -980,6 +982,8 @@ pub async fn api_save_transcript<R: Runtime>(
             log_error!("Failed to parse transcript segments: {}", e);
             format!("Invalid transcript data format: {}. Please check the data structure.", e)
         })?;
+    let transcripts_to_save =
+        crate::audio::transcription::reconcile::suppress_cross_source_echoes(transcripts_to_save);
 
     // Log parsed segments count and first segment details
     if let Some(first_seg) = transcripts_to_save.first() {
@@ -1006,6 +1010,7 @@ pub async fn api_save_transcript<R: Runtime>(
                 "Successfully saved transcript and created meeting with id: {}",
                 meeting_id
             );
+            crate::hooks::run_post_meeting_hooks(pool, &meeting_id).await;
             Ok(serde_json::json!({
                 "status": "success",
                 "message": "Transcript saved successfully",

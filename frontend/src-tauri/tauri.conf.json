@@ -99,7 +99,8 @@
         ],
         "externalBin": [
             "binaries/llama-helper",
-            "binaries/ffmpeg"
+            "binaries/ffmpeg",
+            "binaries/meetily-cli"
         ],
         "macOS": {
             "entitlements": "entitlements.plist",

@@ -6,6 +6,7 @@ pub mod diarization;
 pub mod engine;
 pub mod parakeet_provider;
 pub mod provider;
+pub mod reconcile;
 pub mod whisper_provider;
 pub mod worker;
 

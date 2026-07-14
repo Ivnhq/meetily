@@ -34,6 +34,8 @@ export interface VirtualizedTranscriptViewProps {
     totalCount?: number;
     loadedCount?: number;
     onLoadMore?: () => void;
+    /** Rename all segments for a diarized speaker in a saved meeting. */
+    onRenameSpeaker?: (speakerId: string, displayName: string, remember: boolean) => Promise<void>;
 }
 
 // Threshold for enabling virtualization (below this, use simple rendering)
@@ -70,23 +72,42 @@ const TranscriptSegment = memo(function TranscriptSegment({
     text,
     speaker,
     source,
+    speakerId,
     sourceOverlap,
     confidence,
     isStreaming,
     showConfidence,
+    onRenameSpeaker,
 }: {
     id: string;
     timestamp: number;
     text: string;
     speaker?: string;
     source?: string;
+    speakerId?: string;
     sourceOverlap?: boolean;
     confidence?: number;
     isStreaming: boolean;
     showConfidence: boolean;
+    onRenameSpeaker?: (speakerId: string, displayName: string, remember: boolean) => Promise<void>;
 }) {
     const displayText = cleanStopWords(text) || (text.trim() === '' ? '[Silence]' : text);
     const speakerLabel = speaker || source;
+    const [isEditingSpeaker, setIsEditingSpeaker] = useState(false);
+    const [speakerName, setSpeakerName] = useState(speakerLabel || '');
+    const [rememberSpeaker, setRememberSpeaker] = useState(true);
+    const [isSavingSpeaker, setIsSavingSpeaker] = useState(false);
+
+    const saveSpeaker = async () => {
+        if (!speakerId || !onRenameSpeaker || !speakerName.trim()) return;
+        setIsSavingSpeaker(true);
+        try {
+            await onRenameSpeaker(speakerId, speakerName.trim(), rememberSpeaker);
+            setIsEditingSpeaker(false);
+        } finally {
+            setIsSavingSpeaker(false);
+        }
+    };
 
     return (
         <div id={`segment-${id}`} className="mb-3">
@@ -106,9 +127,53 @@ const TranscriptSegment = memo(function TranscriptSegment({
                 <div className="flex-1">
                     {speakerLabel && (
                         <div className="mb-1 flex items-center gap-2">
-                            <span className="text-[11px] font-medium uppercase tracking-normal text-gray-500">
-                                {speakerLabel}
-                            </span>
+                            {isEditingSpeaker ? (
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <input
+                                        autoFocus
+                                        className="w-36 rounded border border-gray-300 px-2 py-1 text-xs"
+                                        value={speakerName}
+                                        onChange={(event) => setSpeakerName(event.target.value)}
+                                        onKeyDown={(event) => {
+                                            if (event.key === 'Enter') void saveSpeaker();
+                                            if (event.key === 'Escape') setIsEditingSpeaker(false);
+                                        }}
+                                    />
+                                    <label className="flex items-center gap-1 text-[11px] text-gray-500">
+                                        <input
+                                            type="checkbox"
+                                            checked={rememberSpeaker}
+                                            onChange={(event) => setRememberSpeaker(event.target.checked)}
+                                        />
+                                        Remember
+                                    </label>
+                                    <button
+                                        type="button"
+                                        className="text-[11px] font-medium text-blue-600 disabled:opacity-50"
+                                        disabled={isSavingSpeaker}
+                                        onClick={() => void saveSpeaker()}
+                                    >
+                                        {isSavingSpeaker ? 'Saving…' : 'Save'}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="text-[11px] text-gray-500"
+                                        onClick={() => setIsEditingSpeaker(false)}
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            ) : (
+                                <button
+                                    type="button"
+                                    className="text-[11px] font-medium uppercase tracking-normal text-gray-500 disabled:cursor-default"
+                                    disabled={!speakerId || !onRenameSpeaker}
+                                    title={speakerId && onRenameSpeaker ? 'Rename this speaker' : undefined}
+                                    onClick={() => setIsEditingSpeaker(true)}
+                                >
+                                    {speakerLabel}
+                                </button>
+                            )}
                             {sourceOverlap && (
                                 <span className="text-[11px] text-amber-600">overlap</span>
                             )}
@@ -141,6 +206,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     totalCount = 0,
     loadedCount = 0,
     onLoadMore,
+    onRenameSpeaker,
 }) => {
     // Create scroll ref first - shared between virtualizer and auto-scroll hook
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -311,11 +377,13 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         timestamp={segment.timestamp}
                                         text={getDisplayText(segment)}
                                         speaker={segment.speaker}
+                                        speakerId={segment.speaker_id}
                                         source={segment.source}
                                         sourceOverlap={segment.source_overlap}
                                         confidence={segment.confidence}
                                         isStreaming={isStreaming}
                                         showConfidence={showConfidence}
+                                        onRenameSpeaker={onRenameSpeaker}
                                     />
                                 </div>
                             );
@@ -370,11 +438,13 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         timestamp={segment.timestamp}
                                         text={getDisplayText(segment)}
                                         speaker={segment.speaker}
+                                        speakerId={segment.speaker_id}
                                         source={segment.source}
                                         sourceOverlap={segment.source_overlap}
                                         confidence={segment.confidence}
                                         isStreaming={isStreaming}
                                         showConfidence={showConfidence}
+                                        onRenameSpeaker={onRenameSpeaker}
                                     />
                                 </motion.div>
                             );

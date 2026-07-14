@@ -107,6 +107,7 @@ This fork is tracking a local-first **Live Notes Mode** roadmap: rolling meeting
 
 - [Ivnhq Live Notes Roadmap](docs/IVNHQ_LIVE_NOTES_ROADMAP.md)
 - [Ivnhq Live Notes Issue Backlog](docs/IVNHQ_LIVE_NOTES_ISSUES.md)
+- [Ivnhq Local Meeting Intelligence](docs/IVNHQ_LOCAL_MEETING_INTELLIGENCE.md)
 
 ## Installation
 

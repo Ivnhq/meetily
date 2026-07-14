@@ -647,6 +647,9 @@ jobs:
           Write-Host "Building llama-helper sidecar (CPU-only)..."
 
           cargo build --release -p llama-helper
+          $env:TAURI_CONFIG = '{"bundle":{"externalBin":["binaries/llama-helper","binaries/ffmpeg"]}}'
+          cargo build --release -p meetily --bin meetily-cli
+          Remove-Item Env:TAURI_CONFIG
 
           if ($LASTEXITCODE -ne 0) {
             Write-Error "Failed to build llama-helper"
@@ -656,6 +659,7 @@ jobs:
           # Copy binary to binaries directory
           New-Item -ItemType Directory -Force -Path "frontend/src-tauri/binaries" | Out-Null
           Copy-Item "target/release/llama-helper.exe" -Destination "frontend/src-tauri/binaries/llama-helper-x86_64-pc-windows-msvc.exe"
+          Copy-Item "target/release/meetily-cli.exe" -Destination "frontend/src-tauri/binaries/meetily-cli-x86_64-pc-windows-msvc.exe"
 
           Write-Host "Copied llama-helper to frontend/src-tauri/binaries/"
           Get-ChildItem "frontend/src-tauri/binaries/"

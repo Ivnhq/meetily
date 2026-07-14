@@ -11,6 +11,7 @@ export interface Transcript {
   source?: string;
   speaker?: string;
   speaker_id?: string;
+  speaker_fingerprint?: number[];
   source_overlap?: boolean;
   sequence_id?: number;
   chunk_start_time?: number; // Legacy field
@@ -28,6 +29,7 @@ export interface TranscriptUpdate {
   source: string;
   speaker: string;
   speaker_id?: string | null;
+  speaker_fingerprint?: number[] | null;
   source_overlap: boolean;
   sequence_id: number;
   chunk_start_time: number; // Legacy field

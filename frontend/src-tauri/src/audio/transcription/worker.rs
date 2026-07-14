@@ -34,6 +34,7 @@ pub struct TranscriptUpdate {
     pub source: String,
     pub speaker: String,
     pub speaker_id: Option<String>,
+    pub speaker_fingerprint: Option<Vec<f32>>,
     pub source_overlap: bool,
     pub sequence_id: u64,
     pub chunk_start_time: f64, // Legacy field, kept for compatibility
@@ -236,6 +237,9 @@ pub fn start_transcription_task<R: Runtime>(
                                             source: chunk_device_type.source_label().to_string(),
                                             speaker: speaker_assignment.speaker,
                                             speaker_id: Some(speaker_assignment.speaker_id),
+                                            speaker_fingerprint: speaker_assignment
+                                                .fingerprint
+                                                .map(|values| values.to_vec()),
                                             source_overlap,
                                             sequence_id,
                                             chunk_start_time: chunk_timestamp, // Legacy compatibility

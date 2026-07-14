@@ -5,10 +5,11 @@ const MIN_CLUSTER_SECONDS: f64 = 0.75;
 const NEW_SPEAKER_DISTANCE: f32 = 0.2;
 const UPDATE_WEIGHT: f32 = 0.18;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SpeakerAssignment {
     pub speaker: String,
     pub speaker_id: String,
+    pub fingerprint: Option<[f32; 6]>,
 }
 
 #[derive(Debug, Clone)]
@@ -178,6 +179,7 @@ impl SpeakerDiarizer {
         SpeakerAssignment {
             speaker: speaker.label.clone(),
             speaker_id: speaker.id.clone(),
+            fingerprint: Some(speaker.fingerprint.values),
         }
     }
 }
@@ -212,6 +214,7 @@ impl SourceProfiles {
         SpeakerAssignment {
             speaker: label,
             speaker_id: id,
+            fingerprint: Some(fingerprint.values),
         }
     }
 
@@ -225,6 +228,7 @@ impl SourceProfiles {
         Some(SpeakerAssignment {
             speaker: speaker.label.clone(),
             speaker_id: speaker.id.clone(),
+            fingerprint: Some(speaker.fingerprint.values),
         })
     }
 
@@ -245,6 +249,7 @@ impl SourceProfiles {
         SpeakerAssignment {
             speaker: speaker.to_string(),
             speaker_id: id.to_string(),
+            fingerprint: None,
         }
     }
 }

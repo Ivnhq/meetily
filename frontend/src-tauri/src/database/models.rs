@@ -34,6 +34,7 @@ pub struct Transcript {
     pub source: Option<String>,
     pub speaker: Option<String>,
     pub speaker_id: Option<String>,
+    pub speaker_fingerprint_json: Option<String>,
     pub source_overlap: Option<bool>,
     // Recording-relative timestamps for audio-transcript synchronization
     pub audio_start_time: Option<f64>,

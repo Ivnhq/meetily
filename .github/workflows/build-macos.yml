@@ -139,10 +139,13 @@ jobs:
         run: |
           echo "Building llama-helper sidecar with Metal support..."
           cargo build --release -p llama-helper --features metal
+          TAURI_CONFIG='{"bundle":{"externalBin":["binaries/llama-helper","binaries/ffmpeg"]}}' \
+            cargo build --release -p meetily --bin meetily-cli --features metal
 
           # Copy binary to binaries directory
           mkdir -p frontend/src-tauri/binaries
           cp target/release/llama-helper frontend/src-tauri/binaries/llama-helper-aarch64-apple-darwin
+          cp target/release/meetily-cli frontend/src-tauri/binaries/meetily-cli-aarch64-apple-darwin
 
           echo "Copied llama-helper to frontend/src-tauri/binaries/"
           ls -la frontend/src-tauri/binaries/

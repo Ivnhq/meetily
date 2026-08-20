@@ -7,6 +7,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { Transcript } from '@/types';
+import type { LiveNotesState } from '@/types/liveNotes';
 
 export interface SaveMeetingRequest {
   meetingTitle: string;
@@ -16,6 +17,10 @@ export interface SaveMeetingRequest {
 
 export interface SaveMeetingResponse {
   meeting_id: string;
+}
+
+export interface SaveLiveNotesResponse {
+  saved: boolean;
 }
 
 export interface Meeting {
@@ -55,6 +60,20 @@ export class StorageService {
    */
   async getMeeting(meetingId: string): Promise<Meeting> {
     return invoke<Meeting>('api_get_meeting', { meetingId });
+  }
+
+  async getLiveNotes(meetingId: string): Promise<LiveNotesState | null> {
+    return invoke<LiveNotesState | null>('api_get_live_notes', { meetingId });
+  }
+
+  async saveLiveNotes(
+    meetingId: string,
+    liveNotes: LiveNotesState
+  ): Promise<SaveLiveNotesResponse> {
+    return invoke<SaveLiveNotesResponse>('api_save_live_notes', {
+      meetingId,
+      liveNotes,
+    });
   }
 
   /**

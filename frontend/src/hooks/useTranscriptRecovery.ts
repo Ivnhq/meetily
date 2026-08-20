@@ -9,6 +9,8 @@ import { useState, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { indexedDBService, MeetingMetadata, StoredTranscript } from '@/services/indexedDBService';
 import { storageService } from '@/services/storageService';
+import { applyPinnedSummaryLanguageToMeeting } from '@/lib/summary-language-preferences';
+import { toast } from 'sonner';
 
 interface AudioRecoveryStatus {
   status: string; // "success" | "partial" | "failed" | "none"
@@ -45,7 +47,7 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
       // The 15 seconds threshold prevents showing meetings from the current session(jus in case)
       // where recording just stopped but hasn't been fully saved yet
       const cutoffTime = Date.now() - (7 * 24 * 60 * 60 * 1000);
-      const secondsAgo = Date.now() - (15 * 1000);
+      const secondsAgo = Date.now() - (2 * 1000);
 
       const recentMeetings = meetings.filter(m => {
         const isWithinRetention = m.lastUpdated > cutoffTime; // Not older than 7 days
@@ -167,6 +169,10 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
         sequence_id: t.sequenceId || index,
         chunk_start_time: (t as any).chunk_start_time,
         is_partial: (t as any).is_partial || false,
+        source: (t as any).source,
+        speaker: (t as any).speaker,
+        speaker_id: (t as any).speaker_id,
+        source_overlap: (t as any).source_overlap,
         confidence: t.confidence,
         audio_start_time: (t as any).audio_start_time,
         audio_end_time: (t as any).audio_end_time,
@@ -181,6 +187,15 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
       );
 
       const savedMeetingId = saveResponse.meeting_id;
+
+      try {
+        await applyPinnedSummaryLanguageToMeeting(savedMeetingId);
+      } catch (error) {
+        console.warn('Failed to apply pinned summary language to recovered meeting:', error);
+        toast.warning('Could not apply default summary language', {
+          description: 'The recovered meeting was saved, but the default summary language was not applied.',
+        });
+      }
 
       // 7. Mark as saved in IndexedDB
       await indexedDBService.markMeetingSaved(meetingId);

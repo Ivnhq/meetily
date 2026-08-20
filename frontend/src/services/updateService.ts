@@ -12,11 +12,15 @@ import { getVersion } from '@tauri-apps/api/app';
 export interface UpdateInfo {
   available: boolean;
   currentVersion: string;
+  disabled?: boolean;
   version?: string;
   date?: string;
   body?: string;
   downloadUrl?: string;
 }
+
+export const updatesDisabledForThisBuild =
+  process.env.NEXT_PUBLIC_MEETILY_DISABLE_UPDATES === '1';
 
 export interface UpdateProgress {
   downloaded: number;
@@ -39,6 +43,14 @@ export class UpdateService {
    * @returns Promise with update information
    */
   async checkForUpdates(force = false): Promise<UpdateInfo> {
+    if (updatesDisabledForThisBuild) {
+      return {
+        available: false,
+        currentVersion: await getVersion(),
+        disabled: true,
+      };
+    }
+
     // Prevent concurrent update checks
     if (this.updateCheckInProgress) {
       throw new Error('Update check already in progress');
@@ -95,6 +107,10 @@ export class UpdateService {
     update: Update,
     onProgress?: (progress: UpdateProgress) => void
   ): Promise<void> {
+    if (updatesDisabledForThisBuild) {
+      throw new Error('Updates are disabled for this custom build');
+    }
+
     try {
       // Download the update
       await update.download();

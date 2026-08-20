@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode, useRef } from 'react';
 import { TranscriptModelProps } from '@/components/TranscriptSettings';
 import { SelectedDevices } from '@/components/DeviceSelection';
-import { configService, ModelConfig } from '@/services/configService';
+import { configService, isLiveNotesProviderSupported, ModelConfig } from '@/services/configService';
 import { invoke } from '@tauri-apps/api/core';
 import Analytics from '@/lib/analytics';
 import { BetaFeatures, BetaFeatureKey, loadBetaFeatures, saveBetaFeatures } from '@/types/betaFeatures';
@@ -46,6 +46,9 @@ interface ConfigContextType {
   // Model configuration
   modelConfig: ModelConfig;
   setModelConfig: (config: ModelConfig | ((prev: ModelConfig) => ModelConfig)) => void;
+  liveNotesModelConfig: ModelConfig | null;
+  effectiveLiveNotesModelConfig: ModelConfig;
+  setLiveNotesModelConfig: (config: ModelConfig | null | ((prev: ModelConfig | null) => ModelConfig | null)) => void;
 
   // Transcript model configuration
   transcriptModelConfig: TranscriptModelProps;
@@ -95,6 +98,52 @@ interface ConfigContextType {
 
 const ConfigContext = createContext<ConfigContextType | undefined>(undefined);
 
+const LIVE_NOTES_MODEL_CONFIG_KEY = 'meetily_live_notes_model_config';
+
+function loadSavedLiveNotesModelConfig(): ModelConfig | null {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const raw = window.localStorage.getItem(LIVE_NOTES_MODEL_CONFIG_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as Partial<ModelConfig>;
+    if (!parsed.provider || !parsed.model || !isLiveNotesProviderSupported(parsed.provider)) {
+      return null;
+    }
+
+    return {
+      provider: parsed.provider,
+      model: parsed.model,
+      whisperModel: parsed.whisperModel || 'large-v3',
+      apiKey: parsed.apiKey ?? null,
+      ollamaEndpoint: parsed.ollamaEndpoint ?? null,
+      customOpenAIEndpoint: parsed.customOpenAIEndpoint ?? null,
+      customOpenAIModel: parsed.customOpenAIModel ?? null,
+      customOpenAIApiKey: parsed.customOpenAIApiKey ?? null,
+      maxTokens: parsed.maxTokens ?? null,
+      temperature: parsed.temperature ?? null,
+      topP: parsed.topP ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveLiveNotesModelConfig(config: ModelConfig | null): void {
+  if (typeof window === 'undefined') return;
+
+  try {
+    if (config) {
+      window.localStorage.setItem(LIVE_NOTES_MODEL_CONFIG_KEY, JSON.stringify(config));
+    } else {
+      window.localStorage.removeItem(LIVE_NOTES_MODEL_CONFIG_KEY);
+    }
+  } catch {
+    // Local setting only; ignore storage quota or privacy-mode failures.
+  }
+}
+
 
 export function ConfigProvider({ children }: { children: ReactNode }) {
   // Model configuration state
@@ -104,6 +153,9 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     whisperModel: 'large-v3',
     ollamaEndpoint: null
   });
+  const [liveNotesModelConfig, setLiveNotesModelConfigState] = useState<ModelConfig | null>(() =>
+    loadSavedLiveNotesModelConfig()
+  );
 
   // Transcript model configuration state
   const [transcriptModelConfig, setTranscriptModelConfig] = useState<TranscriptModelProps>({
@@ -410,6 +462,17 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     setProviderApiKeys(prev => ({ ...prev, [provider]: apiKey }));
   }, []);
 
+  const setLiveNotesModelConfig = useCallback((
+    config: ModelConfig | null | ((prev: ModelConfig | null) => ModelConfig | null)
+  ) => {
+    setLiveNotesModelConfigState((prev) => {
+      const next = typeof config === 'function' ? config(prev) : config;
+      const supportedNext = next && isLiveNotesProviderSupported(next.provider) ? next : null;
+      saveLiveNotesModelConfig(supportedNext);
+      return supportedNext;
+    });
+  }, []);
+
   // Lazy load preference settings (only loads if not already cached)
   const loadPreferences = useCallback(async () => {
     // If already loaded, don't reload
@@ -482,9 +545,17 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
+  const effectiveLiveNotesModelConfig = useMemo(
+    () => liveNotesModelConfig ?? modelConfig,
+    [liveNotesModelConfig, modelConfig]
+  );
+
   const value: ConfigContextType = useMemo(() => ({
     modelConfig,
     setModelConfig,
+    liveNotesModelConfig,
+    effectiveLiveNotesModelConfig,
+    setLiveNotesModelConfig,
     isAutoSummary,
     toggleIsAutoSummary,
     providerApiKeys,
@@ -509,6 +580,9 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     updateNotificationSettings,
   }), [
     modelConfig,
+    liveNotesModelConfig,
+    effectiveLiveNotesModelConfig,
+    setLiveNotesModelConfig,
     isAutoSummary,
     toggleIsAutoSummary,
     providerApiKeys,

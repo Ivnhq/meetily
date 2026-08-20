@@ -8,10 +8,26 @@ use super::devices::AudioDevice;
 use super::buffer_pool::AudioBufferPool;
 
 /// Device type for audio chunks
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeviceType {
     Microphone,
     System,
+}
+
+impl DeviceType {
+    pub fn source_label(&self) -> &'static str {
+        match self {
+            DeviceType::Microphone => "Microphone",
+            DeviceType::System => "System",
+        }
+    }
+
+    pub fn speaker_label(&self) -> &'static str {
+        match self {
+            DeviceType::Microphone => "Local speaker",
+            DeviceType::System => "Remote speakers",
+        }
+    }
 }
 
 /// Audio chunk with metadata for processing
@@ -22,6 +38,7 @@ pub struct AudioChunk {
     pub timestamp: f64,
     pub chunk_id: u64,
     pub device_type: DeviceType,
+    pub source_overlap: bool,
 }
 
 /// Processed audio chunk (post-VAD) for recording

@@ -108,7 +108,9 @@ export function useRecordingStart(
 
       console.log('Parakeet ready - setting up meeting title and state');
 
-      const randomTitle = generateMeetingTitle();
+      const suggestedTitle = sessionStorage.getItem('suggestedMeetingTitle');
+      sessionStorage.removeItem('suggestedMeetingTitle');
+      const randomTitle = suggestedTitle?.trim() || generateMeetingTitle();
       setMeetingTitle(randomTitle);
 
       // Set STARTING status before initiating backend recording

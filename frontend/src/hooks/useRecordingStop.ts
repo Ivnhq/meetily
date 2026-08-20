@@ -8,6 +8,11 @@ import { useRecordingState, RecordingStatus } from '@/contexts/RecordingStateCon
 import { storageService } from '@/services/storageService';
 import { transcriptService } from '@/services/transcriptService';
 import Analytics from '@/lib/analytics';
+import { consumeLiveNotesFromLocalStorage } from '@/types/liveNotes';
+import {
+  applyPinnedSummaryLanguageToMeeting,
+  detectAndCacheSummaryLanguage,
+} from '@/lib/summary-language-preferences';
 
 type SummaryStatus = 'idle' | 'processing' | 'summarizing' | 'regenerating' | 'completed' | 'error';
 
@@ -52,6 +57,7 @@ export function useRecordingStop(
     flushBuffer,
     clearTranscripts,
     meetingTitle,
+    currentMeetingId,
     markMeetingAsSaved,
   } = useTranscripts();
 
@@ -261,9 +267,49 @@ export function useRecordingStop(
             throw new Error('No meeting ID received from save operation');
           }
 
+          let shouldDetectSummaryLanguage = false;
+          try {
+            shouldDetectSummaryLanguage = !(await applyPinnedSummaryLanguageToMeeting(meetingId));
+          } catch (error) {
+            console.warn('Failed to apply pinned summary language preference for new meeting:', error);
+            toast.warning('Could not apply default summary language', {
+              description: 'The meeting was saved, but the default summary language was not applied.',
+            });
+          }
+
+          if (shouldDetectSummaryLanguage) {
+            try {
+              await detectAndCacheSummaryLanguage(
+                meetingId,
+                freshTranscripts.map(t => t.text)
+              );
+            } catch (error) {
+              console.warn('Failed to detect summary language for new meeting:', error);
+              toast.warning('Could not detect summary language', {
+                description: 'The meeting was saved, but Auto could not detect the summary language.',
+              });
+            }
+          }
+
           console.log('✅ Successfully saved COMPLETE meeting with ID:', meetingId);
           console.log('   Transcripts:', freshTranscripts.length);
           console.log('   folder_path:', folderPath);
+
+          const temporaryLiveNotesId = currentMeetingId || sessionStorage.getItem('indexeddb_current_meeting_id');
+          if (temporaryLiveNotesId) {
+            const liveNotes = consumeLiveNotesFromLocalStorage(temporaryLiveNotesId);
+            if (liveNotes?.updatedAt) {
+              try {
+                await storageService.saveLiveNotes(meetingId, {
+                  ...liveNotes,
+                  meetingId,
+                });
+                console.log('✅ Live Notes saved for meeting:', meetingId);
+              } catch (error) {
+                console.warn('Could not save Live Notes for meeting:', error);
+              }
+            }
+          }
 
           // Mark meeting as saved in IndexedDB (for recovery system)
           await markMeetingAsSaved();
@@ -400,6 +446,7 @@ export function useRecordingStop(
     flushBuffer,
     clearTranscripts,
     meetingTitle,
+    currentMeetingId,
     markMeetingAsSaved,
     refetchMeetings,
     setCurrentMeeting,

@@ -1,12 +1,29 @@
 use crate::database::repositories::{
+    live_notes::LiveNotesRepository,
     meeting::MeetingsRepository, summary::SummaryProcessesRepository,
     transcript_chunk::TranscriptChunksRepository,
 };
 use crate::state::AppState;
+use crate::summary::language_detection::{
+    detect_summary_language, SummaryLanguageDetection,
+};
+use crate::summary::llm_client::{generate_summary, LLMProvider};
+use crate::summary::metadata::{
+    read_detected_summary_language_from_metadata, read_summary_language_from_metadata,
+    write_detected_summary_language_to_metadata, write_summary_language_to_metadata,
+};
+use crate::summary::processor::clean_llm_markdown_output;
 use crate::summary::service::SummaryService;
 use log::{error as log_error, info as log_info, warn as log_warn};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Runtime};
+use std::path::PathBuf;
+use std::time::Duration;
+use tauri::{AppHandle, Manager, Runtime};
+
+const LIVE_NOTES_GENERATION_TIMEOUT: Duration = Duration::from_secs(120);
+const LIVE_NOTES_DEFAULT_MAX_TOKENS: u32 = 512;
+const LIVE_NOTES_DEFAULT_TEMPERATURE: f32 = 0.1;
+const LIVE_NOTES_DEFAULT_TOP_P: f32 = 0.9;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SummaryResponse {
@@ -24,6 +41,218 @@ pub struct SummaryResponse {
 pub struct ProcessTranscriptResponse {
     pub message: String,
     pub process_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveNotesActionItem {
+    pub text: String,
+    pub owner: Option<String>,
+    pub due_date: Option<String>,
+    pub transcript_start_ms: Option<f64>,
+    pub transcript_end_ms: Option<f64>,
+    pub confidence: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveNotesDecision {
+    pub text: String,
+    pub transcript_start_ms: Option<f64>,
+    pub transcript_end_ms: Option<f64>,
+    pub confidence: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveNotesHighlight {
+    pub text: Option<String>,
+    pub transcript_start_ms: Option<f64>,
+    pub transcript_end_ms: Option<f64>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveNotesUpdate {
+    pub current_topic: Option<String>,
+    pub rolling_summary: Option<Vec<String>>,
+    pub key_points: Option<Vec<String>>,
+    pub decisions: Option<Vec<LiveNotesDecision>>,
+    pub action_items: Option<Vec<LiveNotesActionItem>>,
+    pub open_questions: Option<Vec<String>>,
+    pub risks: Option<Vec<String>>,
+    pub highlights: Option<Vec<LiveNotesHighlight>>,
+}
+
+#[tauri::command]
+pub async fn api_get_live_notes<R: Runtime>(
+    _app: AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    meeting_id: String,
+) -> Result<Option<serde_json::Value>, String> {
+    if meeting_id.trim().is_empty() {
+        return Err("meeting_id cannot be empty".to_string());
+    }
+
+    let pool = state.db_manager.pool();
+    LiveNotesRepository::get_state(pool, &meeting_id)
+        .await
+        .map_err(|e| format!("Failed to get live notes: {}", e))
+}
+
+#[tauri::command]
+pub async fn api_save_live_notes<R: Runtime>(
+    _app: AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    meeting_id: String,
+    live_notes: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    if meeting_id.trim().is_empty() {
+        return Err("meeting_id cannot be empty".to_string());
+    }
+
+    let pool = state.db_manager.pool();
+    match LiveNotesRepository::save_state(pool, &meeting_id, &live_notes).await {
+        Ok(saved) => Ok(serde_json::json!({ "saved": saved })),
+        Err(e) => Err(format!("Failed to save live notes: {}", e)),
+    }
+}
+
+/// Generates a small structured update for in-meeting live notes.
+///
+/// This is intentionally separate from the final summary pipeline: it is fast,
+/// stateless on the Rust side, and designed for rolling frontend state merges.
+#[tauri::command]
+pub async fn api_generate_live_notes_update<R: Runtime>(
+    app: AppHandle<R>,
+    transcript_chunk: String,
+    current_state: serde_json::Value,
+    model: String,
+    model_name: String,
+    ollama_endpoint: Option<String>,
+    custom_openai_endpoint: Option<String>,
+    custom_openai_api_key: Option<String>,
+    custom_openai_max_tokens: Option<u32>,
+    custom_openai_temperature: Option<f32>,
+    custom_openai_top_p: Option<f32>,
+) -> Result<LiveNotesUpdate, String> {
+    if transcript_chunk.trim().is_empty() {
+        return Err("No transcript text available for live notes".to_string());
+    }
+
+    let provider = LLMProvider::from_str(&model)?;
+    if !matches!(
+        provider,
+        LLMProvider::Ollama | LLMProvider::BuiltInAI | LLMProvider::CustomOpenAI
+    ) {
+        return Err(format!(
+            "Live Notes currently supports local Ollama, built-in AI, or custom OpenAI-compatible providers. Current provider: {}",
+            model
+        ));
+    }
+
+    let api_key = if provider == LLMProvider::CustomOpenAI {
+        custom_openai_api_key.unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    let system_prompt = r#"You update live meeting notes during an active call.
+
+Return only valid JSON. Do not use markdown fences. Do not include commentary.
+Keep items short, specific, and operational. Do not invent people, owners, or deadlines.
+Use transcript timestamp ranges to set transcriptStartMs and transcriptEndMs in milliseconds when evidence is available.
+Only include generated highlights when both transcriptStartMs and transcriptEndMs are known.
+If the transcript chunk has no useful new information, return empty arrays.
+
+JSON shape:
+{
+  "currentTopic": "short current topic or null",
+  "rollingSummary": ["1-2 concise summary bullets"],
+  "keyPoints": ["important facts from the new chunk"],
+  "decisions": [{"text": "decision", "transcriptStartMs": 0, "transcriptEndMs": 0, "confidence": 0.0}],
+  "actionItems": [{"text": "action", "owner": null, "dueDate": null, "transcriptStartMs": 0, "transcriptEndMs": 0, "confidence": 0.0}],
+  "openQuestions": ["unresolved questions"],
+  "risks": ["risks or concerns"],
+  "highlights": [{"text": "notable moment", "transcriptStartMs": 0, "transcriptEndMs": 0}]
+}"#;
+
+    let user_prompt = format!(
+        "Current live notes state:\n{}\n\nNew transcript chunk:\n{}\n\nUpdate the live notes using only the new transcript chunk and current state.",
+        current_state,
+        transcript_chunk
+    );
+
+    let client = reqwest::Client::new();
+    let app_data_dir = app.path().app_data_dir().ok();
+    let generation = generate_summary(
+        &client,
+        &provider,
+        &model_name,
+        &api_key,
+        system_prompt,
+        &user_prompt,
+        ollama_endpoint.as_deref(),
+        custom_openai_endpoint.as_deref(),
+        custom_openai_max_tokens.or(Some(LIVE_NOTES_DEFAULT_MAX_TOKENS)),
+        custom_openai_temperature.or(Some(LIVE_NOTES_DEFAULT_TEMPERATURE)),
+        custom_openai_top_p.or(Some(LIVE_NOTES_DEFAULT_TOP_P)),
+        app_data_dir.as_ref(),
+        None,
+    );
+
+    let raw = tokio::time::timeout(LIVE_NOTES_GENERATION_TIMEOUT, generation)
+        .await
+        .map_err(|_| {
+            format!(
+                "Live Notes generation timed out after {} seconds. Try a smaller/faster local model or a GPU/accelerated provider.",
+                LIVE_NOTES_GENERATION_TIMEOUT.as_secs()
+            )
+        })??;
+
+    let cleaned = clean_llm_markdown_output(&raw);
+    serde_json::from_str::<LiveNotesUpdate>(&cleaned).map_err(|e| {
+        format!(
+            "Live notes model returned invalid JSON: {}. Raw response: {}",
+            e, cleaned
+        )
+    })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SummaryLanguageStorage {
+    Metadata,
+    LocalFallback,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingSummaryLanguagePreference {
+    pub language: Option<String>,
+    pub storage: SummaryLanguageStorage,
+}
+
+impl MeetingSummaryLanguagePreference {
+    fn metadata(language: Option<String>) -> Self {
+        Self {
+            language,
+            storage: SummaryLanguageStorage::Metadata,
+        }
+    }
+
+    fn local_fallback() -> Self {
+        Self {
+            language: None,
+            storage: SummaryLanguageStorage::LocalFallback,
+        }
+    }
+}
+
+enum MeetingFolderResolution {
+    Folder(PathBuf),
+    NoFolder,
 }
 
 /// Saves a meeting summary (Native SQLx implementation)
@@ -62,6 +291,122 @@ pub async fn api_save_meeting_summary<R: Runtime>(
             Err(e.to_string())
         }
     }
+}
+
+/// Gets the per-meeting summary language override from metadata.json.
+#[tauri::command]
+pub async fn api_get_meeting_summary_language<R: Runtime>(
+    _app: AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    meeting_id: String,
+) -> Result<MeetingSummaryLanguagePreference, String> {
+    log_info!(
+        "api_get_meeting_summary_language called for meeting_id: {}",
+        meeting_id
+    );
+
+    match resolve_meeting_folder(state.db_manager.pool(), &meeting_id).await? {
+        MeetingFolderResolution::Folder(folder) => read_summary_language_from_metadata(&folder)
+            .map(MeetingSummaryLanguagePreference::metadata)
+            .map_err(|e| e.to_string()),
+        MeetingFolderResolution::NoFolder => Ok(MeetingSummaryLanguagePreference::local_fallback()),
+    }
+}
+
+/// Saves or clears the per-meeting summary language override in metadata.json.
+#[tauri::command]
+pub async fn api_save_meeting_summary_language<R: Runtime>(
+    _app: AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    meeting_id: String,
+    summary_language: Option<String>,
+) -> Result<MeetingSummaryLanguagePreference, String> {
+    log_info!(
+        "api_save_meeting_summary_language called for meeting_id: {}, language: {:?}",
+        meeting_id,
+        summary_language
+    );
+
+    match resolve_meeting_folder(state.db_manager.pool(), &meeting_id).await? {
+        MeetingFolderResolution::Folder(folder) => {
+            write_summary_language_to_metadata(&folder, summary_language.as_deref())
+                .map_err(|e| e.to_string())?;
+            read_summary_language_from_metadata(&folder)
+                .map(MeetingSummaryLanguagePreference::metadata)
+                .map_err(|e| e.to_string())
+        }
+        MeetingFolderResolution::NoFolder => Ok(MeetingSummaryLanguagePreference::local_fallback()),
+    }
+}
+
+/// Gets the cached Auto-detected summary language from metadata.json.
+#[tauri::command]
+pub async fn api_get_meeting_detected_summary_language<R: Runtime>(
+    _app: AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    meeting_id: String,
+) -> Result<MeetingSummaryLanguagePreference, String> {
+    log_info!(
+        "api_get_meeting_detected_summary_language called for meeting_id: {}",
+        meeting_id
+    );
+
+    match resolve_meeting_folder(state.db_manager.pool(), &meeting_id).await? {
+        MeetingFolderResolution::Folder(folder) => read_detected_summary_language_from_metadata(&folder)
+            .map(MeetingSummaryLanguagePreference::metadata)
+            .map_err(|e| e.to_string()),
+        MeetingFolderResolution::NoFolder => Ok(MeetingSummaryLanguagePreference::local_fallback()),
+    }
+}
+
+/// Saves or clears the cached Auto-detected summary language in metadata.json.
+#[tauri::command]
+pub async fn api_save_meeting_detected_summary_language<R: Runtime>(
+    _app: AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    meeting_id: String,
+    detected_summary_language: Option<String>,
+) -> Result<MeetingSummaryLanguagePreference, String> {
+    log_info!(
+        "api_save_meeting_detected_summary_language called for meeting_id: {}, language: {:?}",
+        meeting_id,
+        detected_summary_language
+    );
+
+    match resolve_meeting_folder(state.db_manager.pool(), &meeting_id).await? {
+        MeetingFolderResolution::Folder(folder) => {
+            write_detected_summary_language_to_metadata(&folder, detected_summary_language.as_deref())
+                .map_err(|e| e.to_string())?;
+            read_detected_summary_language_from_metadata(&folder)
+                .map(MeetingSummaryLanguagePreference::metadata)
+                .map_err(|e| e.to_string())
+        }
+        MeetingFolderResolution::NoFolder => Ok(MeetingSummaryLanguagePreference::local_fallback()),
+    }
+}
+
+/// Detects the dominant supported summary language from transcript segments.
+#[tauri::command]
+pub async fn api_detect_transcript_summary_language(
+    transcript_texts: Vec<String>,
+) -> Result<SummaryLanguageDetection, String> {
+    Ok(detect_summary_language(&transcript_texts))
+}
+
+async fn resolve_meeting_folder(
+    pool: &sqlx::SqlitePool,
+    meeting_id: &str,
+) -> Result<MeetingFolderResolution, String> {
+    let meeting = MeetingsRepository::get_meeting_metadata(pool, meeting_id)
+        .await
+        .map_err(|e| format!("Failed to load meeting metadata: {}", e))?
+        .ok_or_else(|| format!("Meeting not found: {}", meeting_id))?;
+
+    let Some(folder_path) = meeting.folder_path.filter(|p| !p.trim().is_empty()) else {
+        return Ok(MeetingFolderResolution::NoFolder);
+    };
+
+    Ok(MeetingFolderResolution::Folder(PathBuf::from(folder_path)))
 }
 
 /// Gets summary status and data (Native SQLx implementation)
@@ -175,6 +520,7 @@ pub async fn api_process_transcript<R: Runtime>(
     _overlap: Option<i32>,
     custom_prompt: Option<String>,
     template_id: Option<String>,
+    summary_language: Option<String>,
     _auth_token: Option<String>,
 ) -> Result<ProcessTranscriptResponse, String> {
     use uuid::Uuid;
@@ -189,6 +535,12 @@ pub async fn api_process_transcript<R: Runtime>(
     let pool = state.db_manager.pool().clone();
     let final_prompt = custom_prompt.unwrap_or_else(|| "".to_string());
     let final_template_id = template_id.unwrap_or_else(|| "daily_standup".to_string());
+
+    // Normalise empty / whitespace-only to None so "" and null behave identically
+    let summary_language = summary_language.and_then(|s| {
+        let t = s.trim();
+        if t.is_empty() { None } else { Some(t.to_string()) }
+    });
 
     // Create or reset the process entry in the database
     SummaryProcessesRepository::create_or_reset_process(&pool, &m_id)
@@ -227,6 +579,7 @@ pub async fn api_process_transcript<R: Runtime>(
             model_name,
             final_prompt,
             final_template_id,
+            summary_language,
         )
         .await;
     });

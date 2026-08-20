@@ -4,8 +4,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 import { ModelConfig, ModelSettingsModal } from '@/components/ModelSettingsModal';
+import { SummaryLanguageSettings } from '@/components/SummaryLanguageSettings';
 import { Switch } from './ui/switch';
 import { useConfig } from '@/contexts/ConfigContext';
+import { LiveNotesModelSettings } from '@/components/LiveNotesModelSettings';
 
 interface SummaryModelSettingsProps {
   refetchTrigger?: number; // Change this to trigger refetch
@@ -133,6 +135,8 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
         </div>
       </div>
 
+      <SummaryLanguageSettings />
+
       <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
         <h3 className="text-lg font-semibold mb-4">Summary Model Configuration</h3>
         <p className="text-sm text-gray-600 mb-6">
@@ -146,6 +150,8 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
           skipInitialFetch={true}
         />
       </div>
+
+      <LiveNotesModelSettings />
     </div>
   );
 }

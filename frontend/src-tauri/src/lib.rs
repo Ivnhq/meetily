@@ -36,8 +36,10 @@ pub(crate) use perf_trace;
 
 // Declare audio module
 pub mod analytics;
+pub mod artifacts;
 pub mod api;
 pub mod audio;
+pub mod calendar;
 pub mod config;
 pub mod console_utils;
 pub mod database;
@@ -47,8 +49,11 @@ pub mod onboarding;
 pub mod openai;
 pub mod anthropic;
 pub mod groq;
+pub mod hooks;
+pub mod knowledge;
 pub mod openrouter;
 pub mod parakeet_engine;
+pub mod speakers;
 pub mod state;
 pub mod summary;
 pub mod tray;
@@ -390,7 +395,22 @@ pub fn get_language_preference_internal() -> Option<String> {
 pub fn run() {
     log::set_max_level(log::LevelFilter::Info);
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            log_info!(
+                "Second app instance requested with args: {:?}, cwd: {:?}",
+                args,
+                cwd
+            );
+
+            tray::focus_main_window(app);
+        }));
+    }
+
+    builder
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
@@ -495,6 +515,18 @@ pub fn run() {
             }
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    if let Err(e) = window.hide() {
+                        log::error!("Failed to hide main window on close request: {}", e);
+                    } else {
+                        log::info!("Main window hidden to tray on close request");
+                    }
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             start_recording,
@@ -605,6 +637,16 @@ pub fn run() {
             groq::groq::get_groq_models,
             api::api_get_meetings,
             api::api_search_transcripts,
+            artifacts::api_export_meeting_artifacts,
+            artifacts::api_export_meeting_to_obsidian,
+            knowledge::api_ask_meetings,
+            hooks::api_list_post_meeting_hooks,
+            hooks::api_save_post_meeting_hook,
+            hooks::api_delete_post_meeting_hook,
+            calendar::api_import_calendar_ics,
+            calendar::api_get_upcoming_calendar_events,
+            calendar::api_detect_current_meeting,
+            calendar::api_get_meeting_readiness,
             api::api_get_profile,
             api::api_save_profile,
             api::api_update_profile,
@@ -622,6 +664,8 @@ pub fn run() {
             api::api_get_meeting_transcripts,
             api::api_save_meeting_title,
             api::api_save_transcript,
+            speakers::api_list_speaker_profiles,
+            speakers::api_rename_meeting_speaker,
             api::open_meeting_folder,
             api::test_backend_connection,
             api::debug_backend_connection,
@@ -631,23 +675,31 @@ pub fn run() {
             api::api_get_custom_openai_config,
             api::api_test_custom_openai_connection,
             // Summary commands
-            summary::api_process_transcript,
-            summary::api_get_summary,
-            summary::api_save_meeting_summary,
-            summary::api_cancel_summary,
+            summary::commands::api_process_transcript,
+            summary::commands::api_generate_live_notes_update,
+            summary::commands::api_get_live_notes,
+            summary::commands::api_save_live_notes,
+            summary::commands::api_get_summary,
+            summary::commands::api_save_meeting_summary,
+            summary::commands::api_get_meeting_summary_language,
+            summary::commands::api_save_meeting_summary_language,
+            summary::commands::api_get_meeting_detected_summary_language,
+            summary::commands::api_save_meeting_detected_summary_language,
+            summary::commands::api_detect_transcript_summary_language,
+            summary::commands::api_cancel_summary,
             // Template commands
-            summary::api_list_templates,
-            summary::api_get_template_details,
-            summary::api_validate_template,
+            summary::template_commands::api_list_templates,
+            summary::template_commands::api_get_template_details,
+            summary::template_commands::api_validate_template,
             // Built-in AI commands
-            summary::summary_engine::builtin_ai_list_models,
-            summary::summary_engine::builtin_ai_get_model_info,
-            summary::summary_engine::builtin_ai_download_model,
-            summary::summary_engine::builtin_ai_cancel_download,
-            summary::summary_engine::builtin_ai_delete_model,
-            summary::summary_engine::builtin_ai_is_model_ready,
-            summary::summary_engine::builtin_ai_get_available_summary_model,
-            summary::summary_engine::builtin_ai_get_recommended_model,
+            summary::summary_engine::commands::builtin_ai_list_models,
+            summary::summary_engine::commands::builtin_ai_get_model_info,
+            summary::summary_engine::commands::builtin_ai_download_model,
+            summary::summary_engine::commands::builtin_ai_cancel_download,
+            summary::summary_engine::commands::builtin_ai_delete_model,
+            summary::summary_engine::commands::builtin_ai_is_model_ready,
+            summary::summary_engine::commands::builtin_ai_get_available_summary_model,
+            summary::summary_engine::commands::builtin_ai_get_recommended_model,
             openrouter::get_openrouter_models,
             audio::recording_preferences::get_recording_preferences,
             audio::recording_preferences::set_recording_preferences,
@@ -720,28 +772,35 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app_handle, event| {
-            if let tauri::RunEvent::Exit = event {
-                log::info!("Application exiting, cleaning up resources...");
-                tauri::async_runtime::block_on(async {
-                    // Clean up database connection and checkpoint WAL
-                    if let Some(app_state) = _app_handle.try_state::<state::AppState>() {
-                        log::info!("Starting database cleanup...");
-                        if let Err(e) = app_state.db_manager.cleanup().await {
-                            log::error!("Failed to cleanup database: {}", e);
+            match event {
+                #[cfg(target_os = "macos")]
+                tauri::RunEvent::Reopen { .. } => {
+                    tray::focus_main_window(_app_handle);
+                }
+                tauri::RunEvent::Exit => {
+                    log::info!("Application exiting, cleaning up resources...");
+                    tauri::async_runtime::block_on(async {
+                        // Clean up database connection and checkpoint WAL
+                        if let Some(app_state) = _app_handle.try_state::<state::AppState>() {
+                            log::info!("Starting database cleanup...");
+                            if let Err(e) = app_state.db_manager.cleanup().await {
+                                log::error!("Failed to cleanup database: {}", e);
+                            } else {
+                                log::info!("Database cleanup completed successfully");
+                            }
                         } else {
-                            log::info!("Database cleanup completed successfully");
+                            log::warn!("AppState not available for database cleanup (likely first launch)");
                         }
-                    } else {
-                        log::warn!("AppState not available for database cleanup (likely first launch)");
-                    }
 
-                    // Clean up sidecar
-                    log::info!("Cleaning up sidecar...");
-                    if let Err(e) = summary::summary_engine::force_shutdown_sidecar().await {
-                        log::error!("Failed to force shutdown sidecar: {}", e);
-                    }
-                });
-                log::info!("Application cleanup complete");
+                        // Clean up sidecar
+                        log::info!("Cleaning up sidecar...");
+                        if let Err(e) = summary::summary_engine::force_shutdown_sidecar().await {
+                            log::error!("Failed to force shutdown sidecar: {}", e);
+                        }
+                    });
+                    log::info!("Application cleanup complete");
+                }
+                _ => {}
             }
         });
 }

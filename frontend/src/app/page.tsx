@@ -21,6 +21,7 @@ import { TranscriptRecovery } from '@/components/TranscriptRecovery';
 import { indexedDBService } from '@/services/indexedDBService';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
+import { MeetingReadiness } from '@/components/MeetingReadiness';
 
 export default function Home() {
   // Local page state (not moved to contexts)
@@ -29,7 +30,7 @@ export default function Home() {
   const [showRecoveryDialog, setShowRecoveryDialog] = useState(false);
 
   // Use contexts for state management
-  const { meetingTitle } = useTranscripts();
+  const { meetingTitle, setMeetingTitle } = useTranscripts();
   const { transcriptModelConfig, selectedDevices } = useConfig();
   const recordingState = useRecordingState();
 
@@ -218,6 +219,16 @@ export default function Home() {
           isStopping={isStopping}
           showModal={showModal}
         />
+        <div className="fixed left-0 right-0 top-4 z-10 pl-8" style={{ marginLeft: sidebarCollapsed ? '4rem' : '16rem' }}>
+          <MeetingReadiness
+            isRecording={recordingState.isRecording}
+            onUseMeetingTitle={(title) => {
+              setMeetingTitle(title);
+              sessionStorage.setItem('suggestedMeetingTitle', title);
+              toast.success(`Meeting title set to ${title}`);
+            }}
+          />
+        </div>
 
         {/* Recording controls - only show when permissions are granted or already recording and not showing status messages */}
         {(hasMicrophone || isRecording) &&

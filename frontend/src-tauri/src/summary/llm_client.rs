@@ -218,8 +218,11 @@ pub async fn generate_summary(
 
     // Build request body based on provider
     let request_body = if provider != &LLMProvider::Claude {
-        // For CustomOpenAI, apply optional parameters if provided
-        let (max_tokens_val, temperature_val, top_p_val) = if provider == &LLMProvider::CustomOpenAI {
+        // Ollama and CustomOpenAI both use OpenAI-compatible request options.
+        let (max_tokens_val, temperature_val, top_p_val) = if matches!(
+            provider,
+            LLMProvider::CustomOpenAI | LLMProvider::Ollama
+        ) {
             (max_tokens, temperature, top_p)
         } else {
             (None, None, None)
@@ -282,7 +285,10 @@ pub async fn generate_summary(
     } else {
         request_future.await.map_err(|e| {
             if e.is_timeout() {
-                format!("LLM request timed out after 60 seconds")
+                format!(
+                    "LLM request timed out after {} seconds",
+                    REQUEST_TIMEOUT_DURATION.as_secs()
+                )
             } else {
                 format!("Failed to send request to LLM: {}", e)
             }

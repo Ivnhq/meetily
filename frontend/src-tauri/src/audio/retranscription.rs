@@ -441,13 +441,17 @@ async fn run_retranscription<R: Runtime>(
 
     for segment in &segments {
         sqlx::query(
-            "INSERT INTO transcripts (id, meeting_id, transcript, timestamp, audio_start_time, audio_end_time, duration)
-             VALUES (?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO transcripts (id, meeting_id, transcript, timestamp, source, speaker, speaker_id, source_overlap, audio_start_time, audio_end_time, duration)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(&segment.id)
         .bind(&meeting_id)
         .bind(&segment.text)
         .bind(&segment.timestamp)
+        .bind(&segment.source)
+        .bind(&segment.speaker)
+        .bind(&segment.speaker_id)
+        .bind(segment.source_overlap.unwrap_or(false))
         .bind(segment.audio_start_time)
         .bind(segment.audio_end_time)
         .bind(segment.duration)
@@ -739,6 +743,7 @@ fn write_retranscription_metadata(
             obj.insert("retranscribed_at".to_string(), serde_json::json!(now));
             obj.insert("status".to_string(), serde_json::json!("completed"));
             obj.insert("transcript_file".to_string(), serde_json::json!("transcripts.json"));
+            obj.remove("detected_summary_language");
         }
         value
     } else {

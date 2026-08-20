@@ -189,6 +189,31 @@ impl ProfessionalAudioMixer {
     }
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceOverlapPolicy {
+    Keep,
+    SuppressMic,
+    MarkOverlap,
+}
+
+impl SourceOverlapPolicy {
+    fn default_for_recording() -> Self {
+        Self::SuppressMic
+    }
+}
+
+fn window_has_voice(samples: &[f32]) -> bool {
+    if samples.is_empty() {
+        return false;
+    }
+
+    let mean_abs = samples.iter().map(|sample| sample.abs()).sum::<f32>() / samples.len() as f32;
+    let peak = samples.iter().map(|sample| sample.abs()).fold(0.0f32, f32::max);
+
+    mean_abs >= 0.003 || peak >= 0.04
+}
+
 /// Simplified audio capture without broadcast channels
 #[derive(Clone)]
 pub struct AudioCapture {
@@ -613,6 +638,7 @@ impl AudioCapture {
             timestamp,
             chunk_id,
             device_type: self.device_type.clone(),
+            source_overlap: false,
         };
 
         // NOTE: Raw audio is NOT sent to recording saver to prevent echo
@@ -681,7 +707,9 @@ pub struct AudioPipeline {
     receiver: mpsc::UnboundedReceiver<AudioChunk>,
     transcription_sender: mpsc::UnboundedSender<AudioChunk>,
     state: Arc<RecordingState>,
-    vad_processor: ContinuousVadProcessor,
+    mic_vad_processor: ContinuousVadProcessor,
+    system_vad_processor: ContinuousVadProcessor,
+    overlap_policy: SourceOverlapPolicy,
     sample_rate: u32,
     chunk_id_counter: u64,
     // Performance optimization: reduce logging frequency
@@ -726,13 +754,23 @@ impl AudioPipeline {
 
         let redemption_time = if cfg!(target_os = "macos") { 400 } else { 400 };
 
-        let vad_processor = match ContinuousVadProcessor::new(sample_rate, redemption_time) {
+        let mic_vad_processor = match ContinuousVadProcessor::new(sample_rate, redemption_time) {
             Ok(processor) => {
-                info!("VAD-driven pipeline: VAD segments will be sent directly to Whisper (no time-based accumulation)");
+                info!("VAD-driven pipeline: microphone VAD segments will be source-labeled before Whisper");
                 processor
             }
             Err(e) => {
-                error!("Failed to create VAD processor: {}", e);
+                error!("Failed to create microphone VAD processor: {}", e);
+                panic!("VAD processor creation failed: {}", e);
+            }
+        };
+        let system_vad_processor = match ContinuousVadProcessor::new(sample_rate, redemption_time) {
+            Ok(processor) => {
+                info!("VAD-driven pipeline: system VAD segments will be source-labeled before Whisper");
+                processor
+            }
+            Err(e) => {
+                error!("Failed to create system VAD processor: {}", e);
                 panic!("VAD processor creation failed: {}", e);
             }
         };
@@ -748,7 +786,9 @@ impl AudioPipeline {
             receiver,
             transcription_sender,
             state,
-            vad_processor,
+            mic_vad_processor,
+            system_vad_processor,
+            overlap_policy: SourceOverlapPolicy::default_for_recording(),
             sample_rate,
             chunk_id_counter: 0,
             // Performance optimization: reduce logging frequency
@@ -831,39 +871,24 @@ impl AudioPipeline {
                             // Previous 2x gain was causing excessive limiting/distortion
                             let mixed_with_gain = mixed_clean;
 
-                            // STEP 3: Send mixed audio for transcription (VAD + Whisper)
-                            match self.vad_processor.process_audio(&mixed_with_gain) {
-                                Ok(speech_segments) => {
-                                    for segment in speech_segments {
-                                        let duration_ms = segment.end_timestamp_ms - segment.start_timestamp_ms;
+                            // STEP 3: Send source-labeled audio for transcription.
+                            // The saved recording remains mixed, but transcripts keep their origin.
+                            let system_active = window_has_voice(&sys_window);
+                            let mic_overlaps_system = system_active && window_has_voice(&mic_window);
+                            let mic_window_for_transcription = if mic_overlaps_system
+                                && matches!(self.overlap_policy, SourceOverlapPolicy::SuppressMic)
+                            {
+                                vec![0.0; mic_window.len()]
+                            } else {
+                                mic_window.clone()
+                            };
 
-                                        if segment.samples.len() >= 800 {  // Minimum 50ms at 16kHz - matches Parakeet capability
-                                            info!("📤 Sending VAD segment: {:.1}ms, {} samples",
-                                                  duration_ms, segment.samples.len());
-
-                                            let transcription_chunk = AudioChunk {
-                                                data: segment.samples,
-                                                sample_rate: 16000,
-                                                timestamp: segment.start_timestamp_ms / 1000.0,
-                                                chunk_id: self.chunk_id_counter,
-                                                device_type: DeviceType::Microphone,  // Mixed audio
-                                            };
-
-                                            if let Err(e) = self.transcription_sender.send(transcription_chunk) {
-                                                warn!("Failed to send VAD segment: {}", e);
-                                            } else {
-                                                self.chunk_id_counter += 1;
-                                            }
-                                        } else {
-                                            debug!("⏭️ Dropping short VAD segment: {:.1}ms ({} samples < 800)",
-                                                   duration_ms, segment.samples.len());
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    warn!("⚠️ VAD error: {}", e);
-                                }
-                            }
+                            self.process_source_window(DeviceType::System, &sys_window, false)?;
+                            self.process_source_window(
+                                DeviceType::Microphone,
+                                &mic_window_for_transcription,
+                                mic_overlaps_system,
+                            )?;
 
                             // STEP 4: Send mixed audio for recording (WAV file)
                             if let Some(ref sender) = self.recording_sender_for_mixed {
@@ -873,6 +898,7 @@ impl AudioPipeline {
                                     timestamp: chunk.timestamp,
                                     chunk_id: self.chunk_id_counter,
                                     device_type: DeviceType::Microphone,  // Mixed audio
+                                    source_overlap: mic_overlaps_system,
                                 };
                                 let _ = sender.send(recording_chunk);
                             }
@@ -900,42 +926,114 @@ impl AudioPipeline {
     fn flush_remaining_audio(&mut self) -> Result<()> {
         info!("Flushing remaining audio from pipeline (processed {} chunks)", self.processed_chunks);
 
-        // Flush any remaining audio from VAD processor and send segments to transcription
-        match self.vad_processor.flush() {
-            Ok(final_segments) => {
-                for segment in final_segments {
-                    let duration_ms = segment.end_timestamp_ms - segment.start_timestamp_ms;
+        self.flush_source_vad(DeviceType::System)?;
+        self.flush_source_vad(DeviceType::Microphone)?;
 
-                    // Send segments >= 50ms (800 samples at 16kHz) - matches main pipeline filter
-                    if segment.samples.len() >= 800 {
-                        info!("📤 Sending final VAD segment to Whisper: {:.1}ms duration, {} samples",
-                              duration_ms, segment.samples.len());
+        Ok(())
+    }
 
-                        let transcription_chunk = AudioChunk {
-                            data: segment.samples,
-                            sample_rate: 16000,
-                            timestamp: segment.start_timestamp_ms / 1000.0,
-                            chunk_id: self.chunk_id_counter,
-                            device_type: DeviceType::Microphone,
-                        };
+    fn process_source_window(
+        &mut self,
+        device_type: DeviceType,
+        samples: &[f32],
+        source_overlap: bool,
+    ) -> Result<()> {
+        let speech_segments = {
+            let processor = match device_type {
+                DeviceType::Microphone => &mut self.mic_vad_processor,
+                DeviceType::System => &mut self.system_vad_processor,
+            };
+            processor.process_audio(samples)
+        };
 
-                        if let Err(e) = self.transcription_sender.send(transcription_chunk) {
-                            warn!("Failed to send final VAD segment: {}", e);
-                        } else {
-                            self.chunk_id_counter += 1;
-                        }
-                    } else {
-                        info!("⏭️ Skipping short final segment: {:.1}ms ({} samples < 800)",
-                              duration_ms, segment.samples.len());
-                    }
+        match speech_segments {
+            Ok(segments) => {
+                for segment in segments {
+                    self.send_transcription_segment(
+                        segment,
+                        device_type.clone(),
+                        source_overlap,
+                        false,
+                    );
                 }
             }
             Err(e) => {
-                warn!("Failed to flush VAD processor: {}", e);
+                warn!("VAD error for {}: {}", device_type.source_label(), e);
             }
         }
 
         Ok(())
+    }
+
+    fn flush_source_vad(&mut self, device_type: DeviceType) -> Result<()> {
+        let final_segments = {
+            let processor = match device_type {
+                DeviceType::Microphone => &mut self.mic_vad_processor,
+                DeviceType::System => &mut self.system_vad_processor,
+            };
+            processor.flush()
+        };
+
+        match final_segments {
+            Ok(segments) => {
+                for segment in segments {
+                    self.send_transcription_segment(segment, device_type.clone(), false, true);
+                }
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to flush {} VAD processor: {}",
+                    device_type.source_label(),
+                    e
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn send_transcription_segment(
+        &mut self,
+        segment: super::vad::SpeechSegment,
+        device_type: DeviceType,
+        source_overlap: bool,
+        is_final_flush: bool,
+    ) {
+        let duration_ms = segment.end_timestamp_ms - segment.start_timestamp_ms;
+
+        // Send segments >= 50ms (800 samples at 16kHz) - matches Parakeet capability
+        if segment.samples.len() >= 800 {
+            let suffix = if is_final_flush { " final" } else { "" };
+            info!(
+                "Sending{} {} VAD segment: {:.1}ms, {} samples",
+                suffix,
+                device_type.source_label(),
+                duration_ms,
+                segment.samples.len()
+            );
+
+            let transcription_chunk = AudioChunk {
+                data: segment.samples,
+                sample_rate: 16000,
+                timestamp: segment.start_timestamp_ms / 1000.0,
+                chunk_id: self.chunk_id_counter,
+                device_type,
+                source_overlap,
+            };
+
+            if let Err(e) = self.transcription_sender.send(transcription_chunk) {
+                warn!("Failed to send VAD segment: {}", e);
+            } else {
+                self.chunk_id_counter += 1;
+            }
+        } else {
+            debug!(
+                "Dropping short {} VAD segment: {:.1}ms ({} samples < 800)",
+                device_type.source_label(),
+                duration_ms,
+                segment.samples.len()
+            );
+        }
     }
 
 }
@@ -1039,6 +1137,7 @@ impl AudioPipelineManager {
                 timestamp: 0.0,
                 chunk_id: u64::MAX, // Special ID to indicate flush
                 device_type: super::recording_state::DeviceType::Microphone,
+                source_overlap: false,
             };
 
             if let Err(e) = sender.send(flush_chunk) {
@@ -1059,6 +1158,7 @@ impl AudioPipelineManager {
                         timestamp: 0.0,
                         chunk_id: u64::MAX - (i as u64),
                         device_type: super::recording_state::DeviceType::Microphone,
+                        source_overlap: false,
                     };
                     let _ = sender.send(additional_flush);
                 }

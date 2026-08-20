@@ -80,6 +80,8 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
         meeting_name
     );
 
+    let engine_lifecycle_guard = super::common::acquire_engine_lifecycle_lock().await;
+
     // Check if already recording
     let current_recording_state = IS_RECORDING.load(Ordering::SeqCst);
     info!("🔍 IS_RECORDING state check: {}", current_recording_state);
@@ -245,6 +247,7 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     // Set recording flag and reset speech detection flag
     info!("🔍 Setting IS_RECORDING to true and resetting SPEECH_DETECTED_EMITTED");
     IS_RECORDING.store(true, Ordering::SeqCst);
+    drop(engine_lifecycle_guard);
     reset_speech_detected_flag(); // Reset for new recording session
 
     // Start optimized parallel transcription task and store handle
@@ -266,6 +269,10 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
                 let segment = crate::audio::recording_saver::TranscriptSegment {
                     id: format!("seg_{}", update.sequence_id),
                     text: update.text.clone(),
+                    source: Some(update.source.clone()),
+                    speaker: Some(update.speaker.clone()),
+                    speaker_id: update.speaker_id.clone(),
+                    source_overlap: Some(update.source_overlap),
                     audio_start_time: update.audio_start_time,
                     audio_end_time: update.audio_end_time,
                     duration: update.duration,
@@ -322,6 +329,8 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
         "Starting recording with specific devices: mic={:?}, system={:?}, meeting={:?}",
         mic_device_name, system_device_name, meeting_name
     );
+
+    let engine_lifecycle_guard = super::common::acquire_engine_lifecycle_lock().await;
 
     // Check if already recording
     let current_recording_state = IS_RECORDING.load(Ordering::SeqCst);
@@ -413,6 +422,7 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     // Set recording flag and reset speech detection flag
     info!("🔍 Setting IS_RECORDING to true and resetting SPEECH_DETECTED_EMITTED");
     IS_RECORDING.store(true, Ordering::SeqCst);
+    drop(engine_lifecycle_guard);
     reset_speech_detected_flag(); // Reset for new recording session
 
     // Start optimized parallel transcription task and store handle
@@ -434,6 +444,10 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
                 let segment = crate::audio::recording_saver::TranscriptSegment {
                     id: format!("seg_{}", update.sequence_id),
                     text: update.text.clone(),
+                    source: Some(update.source.clone()),
+                    speaker: Some(update.speaker.clone()),
+                    speaker_id: update.speaker_id.clone(),
+                    source_overlap: Some(update.source_overlap),
                     audio_start_time: update.audio_start_time,
                     audio_end_time: update.audio_end_time,
                     duration: update.duration,

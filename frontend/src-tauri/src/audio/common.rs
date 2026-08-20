@@ -1,13 +1,25 @@
 use crate::api::TranscriptSegment;
 use anyhow::Result;
 use log::{debug, info};
+use once_cell::sync::Lazy;
 use std::path::Path;
+use std::sync::Arc;
+use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use uuid::Uuid;
+
+static ENGINE_LIFECYCLE_LOCK: Lazy<Arc<AsyncMutex<()>>> =
+    Lazy::new(|| Arc::new(AsyncMutex::new(())));
+
+pub(crate) async fn acquire_engine_lifecycle_lock() -> OwnedMutexGuard<()> {
+    ENGINE_LIFECYCLE_LOCK.clone().lock_owned().await
+}
 
 /// Unload the transcription engine after a batch job (import or retranscription).
 /// Skips unloading if a live recording is currently in progress, since recording
 /// uses the same global engine instances.
 pub(crate) async fn unload_engine_after_batch(use_parakeet: bool) {
+    let _engine_lifecycle_guard = acquire_engine_lifecycle_lock().await;
+
     if crate::audio::recording_commands::is_recording().await {
         log::info!("Skipping model unload after batch: recording in progress");
         return;
@@ -48,6 +60,11 @@ pub(crate) fn create_transcript_segments(transcripts: &[(String, f64, f64)]) -> 
                 id: format!("transcript-{}", Uuid::new_v4()),
                 text: text.trim().to_string(),
                 timestamp: chrono::Utc::now().to_rfc3339(),
+                source: None,
+                speaker: None,
+                speaker_id: None,
+                speaker_fingerprint: None,
+                source_overlap: None,
                 audio_start_time: Some(start_seconds),
                 audio_end_time: Some(end_seconds),
                 duration: Some(duration),
@@ -70,6 +87,10 @@ pub(crate) fn write_transcripts_json(folder: &Path, segments: &[TranscriptSegmen
                 "id": s.id,
                 "text": s.text,
                 "timestamp": s.timestamp,
+                "source": s.source,
+                "speaker": s.speaker,
+                "speaker_id": s.speaker_id,
+                "source_overlap": s.source_overlap,
                 "audio_start_time": s.audio_start_time,
                 "audio_end_time": s.audio_end_time,
                 "duration": s.duration,
@@ -197,4 +218,28 @@ pub(crate) fn split_segment_at_silence(
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_engine_lifecycle_lock_serializes_acquirers() {
+        let guard = acquire_engine_lifecycle_lock().await;
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (acquired_tx, mut acquired_rx) = tokio::sync::oneshot::channel();
+        let waiter = tokio::spawn(async {
+            started_tx.send(()).unwrap();
+            let _guard = acquire_engine_lifecycle_lock().await;
+            acquired_tx.send(()).unwrap();
+        });
+
+        started_rx.await.unwrap();
+        assert!(acquired_rx.try_recv().is_err());
+        drop(guard);
+
+        acquired_rx.await.unwrap();
+        waiter.await.unwrap();
+    }
 }
